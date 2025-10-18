@@ -1,5 +1,6 @@
 """
 ML Analyzer for Introspect - Pattern Recognition in Journal Entries
+RAG Pipeline: Retrieval (semantic search) + Generation (Gemma2-2b)
 """
 
 import sys
@@ -8,17 +9,41 @@ from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 from typing import List, Dict
 from datetime import datetime
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
 
 class Analyzer:
-    """ML-powered journal entry analyzer."""
+    """ML-powered journal entry analyzer with RAG pipeline."""
 
     def __init__(self):
-        """Initialize the analyzer with ML model."""
-        sys.stderr.write("📦 Loading ML model...\n")
+        """Initialize the analyzer with ML models."""
+        sys.stderr.write("📦 Loading embedding model (sentence-transformers)...\n")
         sys.stderr.flush()
-        self.model = SentenceTransformer("all-MiniLM-L6-v2")
-        sys.stderr.write("✅ ML model loaded successfully\n")
+        self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+        sys.stderr.write("✅ Embedding model loaded\n")
+        sys.stderr.flush()
+
+        # Load Gemma2-2b for insight generation
+        sys.stderr.write("📦 Loading Gemma2-2b LLM (this may take a moment)...\n")
+        sys.stderr.flush()
+        
+        model_name = "google/gemma-2-2b-it"
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.llm = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+            device_map="auto" if torch.cuda.is_available() else None,
+        )
+        
+        # Move to CPU if no CUDA
+        if not torch.cuda.is_available():
+            self.llm = self.llm.to("cpu")
+            sys.stderr.write("⚠️  Running on CPU (slower but works)\n")
+        else:
+            sys.stderr.write("🚀 Running on GPU\n")
+        
+        sys.stderr.write("✅ Gemma2-2b LLM loaded successfully\n")
         sys.stderr.flush()
 
     def analyze_entry(
@@ -29,7 +54,7 @@ class Analyzer:
         sys.stderr.flush()
 
         # Generate embedding
-        new_embedding = self.model.encode(new_entry_text)
+        new_embedding = self.embedding_model.encode(new_entry_text)
         sys.stderr.write(f"✅ Generated embedding (shape: {new_embedding.shape})\n")
         sys.stderr.flush()
 
@@ -112,9 +137,9 @@ class Analyzer:
             "I'm anxious and stressed",
         ]
 
-        text_embedding = self.model.encode(text).reshape(1, -1)
-        positive_embeddings = self.model.encode(positive_refs)
-        negative_embeddings = self.model.encode(negative_refs)
+        text_embedding = self.embedding_model.encode(text).reshape(1, -1)
+        positive_embeddings = self.embedding_model.encode(positive_refs)
+        negative_embeddings = self.embedding_model.encode(negative_refs)
 
         positive_sim = cosine_similarity(text_embedding, positive_embeddings).mean()
         negative_sim = cosine_similarity(text_embedding, negative_embeddings).mean()
@@ -346,92 +371,139 @@ class Analyzer:
         all_past_entries: List[Dict],
     ) -> str:
         """
-        Generate a contextual insight based on patterns.
-        Quote the user to themselves!
+        Generate a contextual insight using RAG pipeline with Gemma2-2b.
+        Uses retrieved past entries as context for the LLM.
         """
+        sys.stderr.write("🤖 Generating LLM insight with RAG pipeline...\n")
+        sys.stderr.flush()
 
-        # Case 1: First entry ever
+        # Case 1: First entry ever - simple welcome message
         if len(all_past_entries) == 0:
             return (
-                f"Welcome to your journaling journey! This is your first entry. "
-                f"As you write more, I'll help you spot patterns in your thoughts and emotions."
+                "Welcome to your journaling journey! This is your first entry. "
+                "As you write more, I'll help you spot patterns in your thoughts and emotions."
             )
 
-        # Case 2: Pattern recognition WITH QUOTES
+        # Case 2: Build context from similar entries for RAG
         if len(similar_entries) > 0:
-            most_similar = similar_entries[0]
-
-            # Parse timestamp
-            timestamp = datetime.fromisoformat(most_similar["timestamp"])
-            days_ago = (datetime.now() - timestamp).days
-
-            if days_ago == 0:
-                time_phrase = "earlier today"
-            elif days_ago == 1:
-                time_phrase = "yesterday"
-            elif days_ago < 7:
-                time_phrase = f"{days_ago} days ago"
-            elif days_ago < 30:
-                weeks = days_ago // 7
-                time_phrase = f"{weeks} week{'s' if weeks > 1 else ''} ago"
-            else:
-                months = days_ago // 30
-                time_phrase = f"{months} month{'s' if months > 1 else ''} ago"
-
-            # Extract quote
-            past_text = most_similar["text"]
-            sentences = past_text.split(". ")
-
-            if len(sentences) >= 2:
-                quote = f"{sentences[0]}. {sentences[1]}."
-            else:
-                quote = sentences[0] if sentences else past_text[:150]
-
-            if len(quote) > 200:
-                quote = quote[:197] + "..."
-
-            # Generate insight based on mood
-            if mood["detected"] == "negative":
-                if most_similar.get("mood", 3) < 3:
-                    insight = (
-                        f"You've felt this way before. {time_phrase}, you wrote:\n\n"
-                        f'"{quote}"\n\n'
-                        f"This pattern seems familiar. What helped you move forward then?"
-                    )
+            # Build context from retrieved entries
+            context_entries = []
+            for entry in similar_entries[:3]:  # Use top 3 similar entries
+                timestamp = datetime.fromisoformat(entry["timestamp"])
+                days_ago = (datetime.now() - timestamp).days
+                
+                if days_ago == 0:
+                    time_phrase = "earlier today"
+                elif days_ago == 1:
+                    time_phrase = "yesterday"
+                elif days_ago < 7:
+                    time_phrase = f"{days_ago} days ago"
+                elif days_ago < 30:
+                    weeks = days_ago // 7
+                    time_phrase = f"{weeks} week{'s' if weeks > 1 else ''} ago"
                 else:
-                    insight = (
-                        f"You've navigated similar feelings before. {time_phrase}, you wrote:\n\n"
-                        f'"{quote}"\n\n'
-                        f"You found a way through. What was different that time?"
-                    )
-            else:
-                if most_similar.get("mood", 3) >= 4:
-                    insight = (
-                        f"This positive feeling has happened before! {time_phrase}, you wrote:\n\n"
-                        f'"{quote}"\n\n'
-                        f"You're building a pattern of what works for you."
-                    )
-                else:
-                    insight = (
-                        f"You're in a better place now. {time_phrase} you wrote:\n\n"
-                        f'"{quote}"\n\n'
-                        f"Look at how far you've come. What changed?"
-                    )
-
-        # Case 3: No strong patterns
+                    months = days_ago // 30
+                    time_phrase = f"{months} month{'s' if months > 1 else ''} ago"
+                
+                context_entries.append({
+                    "text": entry["text"],
+                    "time": time_phrase,
+                    "mood": entry.get("mood", 3),
+                    "similarity": entry["similarity"]
+                })
+            
+            # Build the prompt for Gemma2
+            prompt = self._build_rag_prompt(new_entry_text, context_entries, mood)
+            
+            # Generate insight using LLM
+            insight = self._generate_with_llm(prompt)
+            
         else:
+            # Case 3: No similar entries found
             entry_count = len(all_past_entries) + 1
+            prompt = f"""You are a supportive journaling companion. The user has written {entry_count} journal entries.
 
-            if mood["detected"] == "positive":
-                insight = (
-                    f"You're in a good headspace today. This is entry #{entry_count}. "
-                    f"Keep writing - patterns become clearer over time."
-                )
-            else:
-                insight = (
-                    f"I hear that things are challenging right now. "
-                    f"This is entry #{entry_count}. Writing itself is an act of courage. "
-                    f"Patterns will emerge as you continue."
-                )
+Current entry: "{new_entry_text}"
+
+They are feeling {mood["detected"]} today. There are no strongly similar past entries yet. Provide brief, encouraging feedback that acknowledges their feelings and encourages continued journaling to discover patterns.
+
+Keep your response to 2-3 sentences."""
+            
+            insight = self._generate_with_llm(prompt)
 
         return insight
+
+    def _build_rag_prompt(
+        self,
+        current_entry: str,
+        past_entries: List[Dict],
+        mood: Dict
+    ) -> str:
+        """Build a RAG prompt with retrieved past entries as context."""
+        
+        # Build context section from past entries
+        context_text = ""
+        for i, entry in enumerate(past_entries, 1):
+            mood_desc = "struggling" if entry["mood"] <= 2 else "neutral" if entry["mood"] == 3 else "positive"
+            context_text += f"""
+Past Entry {i} (from {entry["time"]}, mood: {entry["mood"]}/5 - {mood_desc}, {int(entry["similarity"]*100)}% similar):
+"{entry["text"]}"
+"""
+        
+        # Build the full prompt
+        prompt = f"""You are a compassionate journaling companion helping the user recognize patterns in their emotional journey. You have access to their past journal entries.
+
+CONTEXT - Similar Past Entries:
+{context_text}
+
+CURRENT ENTRY (mood: {mood["detected"]}):
+"{current_entry}"
+
+TASK:
+Based on the similar past entries, provide a personalized, therapeutic insight that:
+1. Acknowledges the pattern you notice between past and current entries
+2. Quotes or references specific phrases from their past entries to show the connection
+3. Asks a reflective question or provides supportive guidance
+4. Keeps the tone warm, non-judgmental, and encouraging
+
+Keep your response to 3-4 sentences. Quote the user's own words back to them."""
+
+        return prompt
+
+    def _generate_with_llm(self, prompt: str) -> str:
+        """Generate text using Gemma2-2b LLM."""
+        try:
+            # Tokenize input
+            inputs = self.tokenizer(prompt, return_tensors="pt")
+            
+            # Move to same device as model
+            if torch.cuda.is_available():
+                inputs = {k: v.to("cuda") for k, v in inputs.items()}
+            
+            # Generate with controlled parameters
+            with torch.no_grad():
+                outputs = self.llm.generate(
+                    **inputs,
+                    max_new_tokens=200,  # Keep responses concise
+                    temperature=0.7,      # Balanced creativity
+                    top_p=0.9,
+                    do_sample=True,
+                    pad_token_id=self.tokenizer.eos_token_id,
+                )
+            
+            # Decode output
+            full_output = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+            
+            # Extract only the generated response (remove the prompt)
+            response = full_output[len(prompt):].strip()
+            
+            sys.stderr.write(f"✅ LLM generated {len(response)} characters\n")
+            sys.stderr.flush()
+            
+            return response if response else "I'm processing your thoughts and patterns."
+            
+        except Exception as e:
+            sys.stderr.write(f"❌ LLM generation error: {e}\n")
+            sys.stderr.flush()
+            # Fallback to simple response
+            return "I notice patterns in your entries. Continue journaling to deepen these insights."
