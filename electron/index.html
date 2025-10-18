@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+	<meta charset="UTF-8">
+	<title>Introspect - Testing</title>
+	<style>
+		body {
+			font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+			max-width: 800px;
+			margin: 50px auto;
+			padding: 20px;
+			background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+			color: white;
+		}
+
+		.container {
+			background: rgba(255, 255, 255, 0.1);
+			padding: 30px;
+			border-radius: 10px;
+			backdrop-filter: blur(10px);
+		}
+
+		h1 {
+			margin-top: 0;
+		}
+
+		button {
+			background: white;
+			color: #667eea;
+			border: none;
+			padding: 12px 24px;
+			font-size: 16px;
+			border-radius: 6px;
+			cursor: pointer;
+			margin: 10px 10px 10px 0;
+			font-weight: 600;
+		}
+
+		button:hover {
+			transform: scale(1.05);
+		}
+
+		#status {
+			background: rgba(0, 0, 0, 0.2);
+			padding: 15px;
+			border-radius: 6px;
+			margin-top: 20px;
+			font-family: 'Courier New', monospace;
+			white-space: pre-wrap;
+		}
+
+		.success {
+			color: #4ade80;
+		}
+
+		.error {
+			color: #f87171;
+		}
+
+		textarea {
+			width: 100%;
+			height: 100px;
+			padding: 10px;
+			border-radius: 6px;
+			border: none;
+			margin: 10px 0;
+			font-family: inherit;
+		}
+	</style>
+</head>
+
+<body>
+	<div class="container">
+		<h1>🧠 Introspect - Electron Test</h1>
+
+		<h3>Step 1: Check if Electron is running</h3>
+		<button onclick="checkElectron()">Check Electron API</button>
+
+		<h3>Step 2: Test Python Communication (once Python bridge is ready)</h3>
+		<textarea id="testEntry"
+			placeholder="Write a test journal entry...">Today I feel great! I'm learning how Electron works.</textarea>
+		<button onclick="testCreateEntry()">Send to Python</button>
+
+		<button onclick="testGetEntries()">Get Entries</button>
+
+		<div id="status"></div>
+	</div>
+
+	<script>
+		function log(message, type = 'info') {
+			const status = document.getElementById('status');
+			const timestamp = new Date().toLocaleTimeString();
+			const color = type === 'success' ? 'success' : type === 'error' ? 'error' : '';
+			status.innerHTML += `<div class="${color}">[${timestamp}] ${message}</div>`;
+		}
+
+		function checkElectron() {
+			if (typeof window.electronAPI !== 'undefined') {
+				log('✅ SUCCESS: Electron API is available!', 'success');
+				log('Available methods: ' + Object.keys(window.electronAPI).join(', '));
+			} else {
+				log('❌ ERROR: Electron API not found. Check preload.js', 'error');
+			}
+		}
+
+		async function testCreateEntry() {
+			const content = document.getElementById('testEntry').value;
+
+			if (!window.electronAPI) {
+				log('❌ Electron API not available', 'error');
+				return;
+			}
+
+			log('📤 Sending entry to Python...');
+
+			try {
+				const result = await window.electronAPI.createEntry({
+					content: content,
+					mood_rating: 4
+				});
+
+				log('✅ SUCCESS! Got response from Python:', 'success');
+				log(JSON.stringify(result, null, 2));
+
+			} catch (error) {
+				log('❌ ERROR: ' + error.message, 'error');
+			}
+		}
+
+		async function testGetEntries() {
+			if (!window.electronAPI) {
+				log('❌ Electron API not available', 'error');
+				return;
+			}
+
+			log('📥 Requesting entries from Python...');
+
+			try {
+				const result = await window.electronAPI.getEntries(5);
+				log('✅ SUCCESS! Got entries:', 'success');
+				log(JSON.stringify(result, null, 2));
+			} catch (error) {
+				log('❌ ERROR: ' + error.message, 'error');
+			}
+		}
+
+		// Listen for Python errors
+		if (window.electronAPI) {
+			window.electronAPI.onPythonError((error) => {
+				log('🐍 Python Error: ' + error, 'error');
+			});
+		}
+
+		// Auto-check on load
+		window.onload = () => {
+			log('🚀 Test page loaded');
+			checkElectron();
+		};
+	</script>
+</body>
+
+</html>
