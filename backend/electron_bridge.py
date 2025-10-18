@@ -60,23 +60,7 @@ def send_message(msg_type, data=None, error=None, request_id=None):
 
 
 def handle_create_entry(data, request_id):
-    """
-    Handle create_entry command - FULL INTEGRATION!
-
-    WORKFLOW:
-    1. Save entry to database (without embedding yet)
-    2. Get past entries for ML comparison
-    3. Run ML analysis (generate embedding + find patterns)
-    4. Update database with embedding
-    5. Return analysis to Electron
-
-    Args:
-        data: {
-            'content': str,      # Journal entry text
-            'mood_rating': int   # 1-5 scale
-        }
-        request_id: Unique ID for this request
-    """
+    """Handle create_entry command - FULL INTEGRATION with summary!"""
     try:
         content = data.get("content", "")
         mood_rating = data.get("mood_rating", 3)
@@ -84,40 +68,50 @@ def handle_create_entry(data, request_id):
         sys.stderr.write(f"📝 Processing entry (mood: {mood_rating}/5)...\n")
         sys.stderr.flush()
 
-        # Step 1: Save entry to database (without embedding yet - faster UX)
-        entry_id = db.save_entry(content=content, mood_rating=mood_rating)
-        sys.stderr.write(f"✅ Entry saved: {entry_id}\n")
-        sys.stderr.flush()
-
-        # Step 2: Get past entries for ML comparison
+        # Get past entries for ML comparison
         past_entries = db.get_all_entries_for_analysis()
         sys.stderr.write(
             f"📦 Retrieved {len(past_entries)} past entries for analysis\n"
         )
         sys.stderr.flush()
 
-        # Step 3: Run ML analysis
+        # Run ML analysis (includes summary generation!)
         sys.stderr.write(f"🧠 Running ML analysis...\n")
         sys.stderr.flush()
 
-        analysis = analyzer.analyze_entry(content, past_entries)
+        analysis = analyzer.analyze_entry(content, past_entries, mood_rating)
 
         sys.stderr.write(
             f"✅ ML analysis complete: {analysis['mood']['detected']} mood\n"
         )
         sys.stderr.flush()
 
-        # Step 4: Update database with embedding
-        db.update_embedding(entry_id, analysis["embedding"], analysis)
-        sys.stderr.write(f"✅ Embedding saved to database\n")
+        # Prepare analysis for storage (exclude embedding - it's stored separately)
+        analysis_for_db = {
+            "insight": analysis["insight"],
+            "mood": analysis["mood"],
+            "summary": analysis["summary"],
+            # Don't include 'embedding' or 'similar_entries' - too large
+        }
+
+        # Save entry with embedding and analysis
+        entry_id = db.save_entry(
+            content=content,
+            mood_rating=mood_rating,
+            embedding=analysis["embedding"],
+            analysis=analysis_for_db,  # Now JSON-serializable!
+        )
+
+        sys.stderr.write(f"✅ Entry saved: {entry_id}\n")
         sys.stderr.flush()
 
-        # Step 5: Format response for Electron
+        # Format response for Electron (include everything)
         response = {
             "entry_id": entry_id,
             "insight": analysis["insight"],
             "similar_entries": analysis["similar_entries"],
             "mood": analysis["mood"],
+            "summary": analysis["summary"],
         }
 
         send_message("response", data=response, request_id=request_id)

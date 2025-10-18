@@ -1,3 +1,4 @@
+
 # Python
 venv/
 env/
@@ -22,6 +23,7 @@ models/
 node_modules/
 dist/
 build/
+dist-installer
 
 # Electron build artifacts
 electron/dist/

@@ -8,9 +8,15 @@ function getMoodEmoji(mood) {
 }
 
 function getMoodColor(mood) {
-  if (mood >= 4) return "bg-green-400";
-  if (mood === 3) return "bg-yellow-400";
-  return "bg-red-400";
+  if (mood >= 4) return "bg-emerald-500";
+  if (mood === 3) return "bg-amber-500";
+  return "bg-rose-500";
+}
+
+function getMoodGlow(mood) {
+  if (mood >= 4) return "shadow-emerald-500/50";
+  if (mood === 3) return "shadow-amber-500/50";
+  return "shadow-rose-500/50";
 }
 
 // Pattern Timeline Component - Visual representation of emotional patterns
@@ -200,9 +206,23 @@ export default function App() {
         mood_rating: mood,
       });
 
-      // Debug logging to verify mood data is coming through
-      console.log("Response from backend:", response);
-      console.log("Similar entries:", response.similar_entries);
+      // Enhanced debug logging
+      console.log("=== FULL RESPONSE ===");
+      console.log(JSON.stringify(response, null, 2));
+
+      console.log("=== SIMILAR ENTRIES CHECK ===");
+      console.log("Similar entries exist?", !!response.similar_entries);
+      console.log("Similar entries length:", response.similar_entries?.length);
+
+      if (response.similar_entries && response.similar_entries.length > 0) {
+        console.log("First entry:", response.similar_entries[0]);
+        console.log(
+          "First entry has mood?",
+          "mood" in response.similar_entries[0]
+        );
+        console.log("Mood value:", response.similar_entries[0].mood);
+        console.log("Mood type:", typeof response.similar_entries[0].mood);
+      }
 
       setInsight(response.insight);
       setSimilar(response.similar_entries || []);
@@ -249,24 +269,24 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50">
+    <div className="min-h-screen bg-gray-50">
       <div className="container mx-auto px-4 py-8 max-w-4xl">
         {/* Header */}
         <header className="text-center mb-8">
-          <h1 className="text-5xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent mb-3">
+          <h1 className="text-5xl font-bold text-emerald-800 mb-3">
             Introspect
           </h1>
           <p className="text-gray-600 mb-3">
             AI-powered pattern recognition in your journal entries
           </p>
           <div className="flex items-center justify-center gap-3 text-sm flex-wrap">
-            <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-green-100 text-green-800">
+            <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
               <span>✅</span>
               <span>Running Offline</span>
             </span>
-            <span className="text-gray-400">•</span>
+            <span className="text-gray-300">•</span>
             <span className="text-gray-600">100% local processing</span>
-            <span className="text-gray-400">•</span>
+            <span className="text-gray-300">•</span>
             <span className="text-gray-600">Privacy-first</span>
           </div>
         </header>
@@ -274,19 +294,19 @@ export default function App() {
         {/* Main Content */}
         {!insight && !showTimeline ? (
           // Writing State
-          <div className="bg-white rounded-2xl shadow-xl p-8 backdrop-blur-sm bg-white/90">
+          <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-200">
             <form onSubmit={handleSubmit}>
               <div className="mb-6">
-                <label className="block text-gray-700 text-sm font-semibold mb-3">
+                <label className="block text-gray-900 text-sm font-semibold mb-3">
                   What's on your mind?
                 </label>
                 <textarea
                   value={content}
                   onChange={(e) => setContent(e.target.value)}
                   placeholder="Write freely... I'll help you spot patterns in your thoughts and emotions."
-                  className="w-full h-48 px-4 py-3 border-2 border-gray-200 rounded-xl 
-                           focus:ring-2 focus:ring-indigo-500 focus:border-transparent
-                           resize-none text-gray-700 placeholder-gray-400
+                  className="w-full h-48 px-4 py-3 bg-gray-50 border-2 border-gray-300 rounded-xl 
+                           focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500
+                           resize-none text-gray-900 placeholder-gray-400
                            transition-all duration-200"
                   disabled={isAnalyzing}
                 />
@@ -298,7 +318,7 @@ export default function App() {
 
               {/* Mood Rating */}
               <div className="mb-6">
-                <label className="block text-gray-700 text-sm font-semibold mb-3">
+                <label className="block text-gray-900 text-sm font-semibold mb-3">
                   How are you feeling? ({mood}/5)
                 </label>
                 <div className="flex gap-2">
@@ -311,8 +331,8 @@ export default function App() {
                         flex-1 py-3 rounded-xl font-semibold transition-all duration-200
                         ${
                           mood === num
-                            ? "bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg scale-105"
-                            : "bg-gray-100 text-gray-600 hover:bg-gray-200 hover:scale-102"
+                            ? "bg-emerald-600 text-white shadow-lg shadow-emerald-600/30 scale-105"
+                            : "bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-300"
                         }
                       `}
                     >
@@ -330,10 +350,10 @@ export default function App() {
               <button
                 type="submit"
                 disabled={isAnalyzing || content.length < 10}
-                className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white py-4 rounded-xl
-                         font-semibold hover:shadow-lg transition-all duration-200
-                         disabled:opacity-50 disabled:cursor-not-allowed
-                         transform hover:scale-102"
+                className="w-full bg-emerald-600 text-white py-4 rounded-xl
+                         font-bold hover:bg-emerald-700 hover:shadow-lg transition-all duration-200
+                         disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none
+                         transform hover:scale-[1.02]"
               >
                 {isAnalyzing ? (
                   <span className="flex items-center justify-center gap-2">
@@ -356,7 +376,7 @@ export default function App() {
                     <span>Analyzing patterns...</span>
                   </span>
                 ) : (
-                  "🔍 Find Patterns"
+                  "🌱 Find Patterns"
                 )}
               </button>
 
@@ -371,23 +391,23 @@ export default function App() {
             {/* Timeline Button */}
             <button
               onClick={loadTimeline}
-              className="w-full mt-4 bg-gray-100 text-gray-700 py-3 rounded-xl
-                       font-medium hover:bg-gray-200 transition-all duration-200"
+              className="w-full mt-4 bg-gray-100 text-gray-700 py-3 rounded-xl border border-gray-300
+                       font-semibold hover:bg-gray-200 transition-all duration-200"
             >
               📚 View Past Entries
             </button>
           </div>
         ) : showTimeline ? (
-          // Timeline View
+          // Timeline View with Summary Support
           <div>
             <button
               onClick={() => setShowTimeline(false)}
-              className="mb-4 text-indigo-600 hover:text-indigo-700 font-medium flex items-center gap-2"
+              className="mb-4 text-emerald-600 hover:text-emerald-700 font-semibold flex items-center gap-2"
             >
               ← Back to writing
             </button>
 
-            <div className="bg-white rounded-2xl shadow-xl p-8">
+            <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-200">
               <h2 className="text-2xl font-bold text-gray-900 mb-6">
                 Your Journal Timeline
               </h2>
@@ -399,25 +419,70 @@ export default function App() {
               ) : (
                 <div className="space-y-4">
                   {entries.map((entry, idx) => (
-                    <div
+                    <details
                       key={entry.id || idx}
-                      className="border-l-4 border-indigo-200 pl-4 py-3 hover:bg-indigo-50 
-                               rounded-r-lg transition-colors duration-200"
+                      className="border-l-4 border-emerald-600 pl-4 py-3 hover:bg-gray-50
+                               rounded-r-lg transition-colors duration-200 cursor-pointer group"
                     >
-                      <p className="text-gray-700 mb-2">
-                        {entry.content.substring(0, 150)}
-                        {entry.content.length > 150 && "..."}
-                      </p>
-                      <div className="flex items-center gap-4 text-sm text-gray-500">
-                        <span className="font-semibold">
-                          Mood: {entry.mood || entry.mood_rating}/5
-                        </span>
-                        <span>•</span>
-                        <span>
-                          {new Date(entry.timestamp).toLocaleDateString()}
-                        </span>
+                      <summary className="cursor-pointer list-none">
+                        {/* Show summary if available, otherwise fallback to text preview */}
+                        <div className="flex items-center justify-between mb-2">
+                          <h3 className="text-gray-900 font-semibold group-hover:text-emerald-600 transition-colors">
+                            {entry.summary?.title ||
+                              entry.content.substring(0, 80)}
+                            {!entry.summary &&
+                              entry.content.length > 80 &&
+                              "..."}
+                          </h3>
+                          <span className="text-xs text-emerald-600">▼</span>
+                        </div>
+
+                        {/* Show themes and emotion if summary exists */}
+                        {entry.summary && (
+                          <div className="flex items-center gap-2 text-xs mb-2 flex-wrap">
+                            {entry.summary.themes.map((theme, i) => (
+                              <span
+                                key={i}
+                                className="px-2 py-1 bg-gray-100 text-gray-700 rounded-full font-medium"
+                              >
+                                {theme.replace("_", " ")}
+                              </span>
+                            ))}
+                            <span className="text-gray-400">•</span>
+                            <span className="text-gray-600 italic">
+                              {entry.summary.emotion}
+                            </span>
+                          </div>
+                        )}
+
+                        <div className="flex items-center gap-4 text-sm text-gray-600">
+                          <span className="font-semibold flex items-center gap-1">
+                            Mood: {entry.mood || entry.mood_rating}/5
+                            <span className="text-base">
+                              {getMoodEmoji(entry.mood || entry.mood_rating)}
+                            </span>
+                          </span>
+                          <span>•</span>
+                          <span>
+                            {new Date(entry.timestamp).toLocaleDateString(
+                              "en-US",
+                              {
+                                month: "short",
+                                day: "numeric",
+                                year: "numeric",
+                              }
+                            )}
+                          </span>
+                        </div>
+                      </summary>
+
+                      {/* Full content when expanded */}
+                      <div className="mt-3 pt-3 border-t border-gray-200">
+                        <p className="text-gray-700 leading-relaxed whitespace-pre-wrap">
+                          {entry.content}
+                        </p>
                       </div>
-                    </div>
+                    </details>
                   ))}
                 </div>
               )}
@@ -427,10 +492,10 @@ export default function App() {
           // Insight State
           <div className="space-y-6">
             {/* Main Insight */}
-            <div className="bg-white rounded-2xl shadow-xl p-8 backdrop-blur-sm bg-white/90">
+            <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-200">
               <div className="flex items-start gap-4 mb-4">
                 <div
-                  className="w-12 h-12 bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full 
+                  className="w-12 h-12 bg-emerald-600 rounded-full 
                               flex items-center justify-center flex-shrink-0 shadow-lg"
                 >
                   <span className="text-2xl">💡</span>
@@ -439,12 +504,13 @@ export default function App() {
                   <h2 className="text-xl font-bold text-gray-900 mb-3">
                     Pattern Detected
                   </h2>
-                  <p className="text-gray-700 leading-relaxed text-lg">
+                  {/* Preserve line breaks and format quotes */}
+                  <div className="text-gray-700 leading-relaxed text-lg whitespace-pre-wrap">
                     {insight}
-                  </p>
-                  <p className="text-sm text-gray-500 mt-4 italic">
-                    This insight is based on your own past entries, not generic
-                    advice
+                  </div>
+                  <p className="text-sm text-gray-500 mt-4 italic bg-gray-50 p-3 rounded-lg border-l-4 border-emerald-600">
+                    💭 This insight is based on your own past entries, not
+                    generic advice
                   </p>
                 </div>
               </div>
@@ -459,8 +525,8 @@ export default function App() {
 
             {/* Similar Entries - Now collapsible/secondary */}
             {similar.length > 0 && (
-              <details className="bg-white rounded-2xl shadow-xl p-8">
-                <summary className="text-lg font-bold text-gray-900 mb-2 cursor-pointer hover:text-indigo-600 transition-colors">
+              <details className="bg-white rounded-2xl shadow-lg p-8 border border-gray-200">
+                <summary className="text-lg font-bold text-gray-900 mb-2 cursor-pointer hover:text-emerald-600 transition-colors">
                   📖 View All Similar Entries ({similar.length})
                 </summary>
                 <p className="text-sm text-gray-600 mb-4 mt-4">
@@ -469,32 +535,45 @@ export default function App() {
                 </p>
                 <div className="space-y-4">
                   {similar.map((entry, idx) => (
-                    <div
+                    <details
                       key={idx}
-                      className="border-l-4 border-purple-200 pl-4 py-3 bg-gradient-to-r 
-                               from-purple-50 to-indigo-50 rounded-r-xl"
+                      className="border-l-4 border-emerald-600 pl-4 py-3 bg-gray-50
+                               rounded-r-xl cursor-pointer"
                     >
-                      <p className="text-gray-700 mb-2">
+                      <summary className="text-gray-900 mb-2">
                         "{entry.text.substring(0, 150)}..."
-                      </p>
-                      <div className="flex items-center gap-4 text-sm flex-wrap">
-                        <span className="font-bold text-purple-700">
+                        <span className="text-sm text-emerald-600 ml-2">
+                          {entry.text.length > 150 ? "▼ Read full entry" : ""}
+                        </span>
+                      </summary>
+
+                      {/* Full entry content */}
+                      {entry.text.length > 150 && (
+                        <div className="mt-3 pt-3 border-t border-gray-200">
+                          <p className="text-gray-700 leading-relaxed whitespace-pre-wrap">
+                            {entry.text}
+                          </p>
+                        </div>
+                      )}
+
+                      <div className="flex items-center gap-4 text-sm flex-wrap mt-2">
+                        <span className="font-bold text-emerald-700">
                           {Math.round(entry.similarity * 100)}% match
                         </span>
                         {entry.mood && (
                           <>
-                            <span className="text-gray-500">•</span>
+                            <span className="text-gray-300">•</span>
                             <span className="text-gray-600">
                               Mood: {entry.mood}/5 {getMoodEmoji(entry.mood)}
                             </span>
                           </>
                         )}
-                        <span className="text-gray-500">•</span>
+                        <span className="text-gray-300">•</span>
                         <span className="text-gray-600">
                           {new Date(entry.timestamp).toLocaleDateString()}
                         </span>
                       </div>
-                    </div>
+                    </details>
                   ))}
                 </div>
               </details>
@@ -504,16 +583,16 @@ export default function App() {
             <div className="flex gap-4">
               <button
                 onClick={handleNewEntry}
-                className="flex-1 bg-gradient-to-r from-indigo-600 to-purple-600 text-white 
-                         py-4 rounded-xl font-semibold hover:shadow-lg transition-all duration-200
-                         transform hover:scale-102"
+                className="flex-1 bg-emerald-600 text-white
+                         py-4 rounded-xl font-bold hover:bg-emerald-700 hover:shadow-lg transition-all duration-200
+                         transform hover:scale-[1.02]"
               >
                 ✏️ Write Another Entry
               </button>
               <button
                 onClick={loadTimeline}
-                className="flex-1 bg-gray-100 text-gray-700 py-4 rounded-xl
-                         font-semibold hover:bg-gray-200 transition-all duration-200"
+                className="flex-1 bg-white text-gray-900 py-4 rounded-xl border-2 border-gray-300
+                         font-semibold hover:bg-gray-50 transition-all duration-200"
               >
                 📚 View Timeline
               </button>
@@ -540,7 +619,7 @@ export default function App() {
             </span>
             <span>•</span>
             <span className="flex items-center gap-1">
-              <span>🧠</span>
+              <span>🌱</span>
               <span>Local AI processing</span>
             </span>
           </div>
