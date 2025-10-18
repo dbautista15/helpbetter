@@ -7,7 +7,37 @@ let mainWindow;
 let pythonProcess;
 let pythonReady = false;
 
-// Start Python subprocess
+// Store pending requests with unique IDs
+const pendingRequests = new Map();
+let requestIdCounter = 0;
+
+/**
+ * Detect correct Python executable for the platform
+ */
+function getPythonExecutable() {
+  if (app.isPackaged) {
+    // Production: Use bundled Python
+    return path.join(process.resourcesPath, "python", "python.exe");
+  }
+
+  // Development: Detect OS
+  const platform = process.platform;
+
+  if (platform === "darwin") {
+    // Mac: Try python3 first
+    return "python3";
+  } else if (platform === "win32") {
+    // Windows: Use python
+    return "python";
+  } else {
+    // Linux: Try python3
+    return "python3";
+  }
+}
+
+/**
+ * Start Python as a subprocess
+ */
 function startPythonProcess() {
   const pythonScript = path.join(
     __dirname,
@@ -15,9 +45,10 @@ function startPythonProcess() {
     "backend",
     "electron_bridge.py"
   );
-  const pythonExe = "python"; // For now, use system Python
+  const pythonExe = getPythonExecutable();
 
   console.log("🐍 Starting Python subprocess...");
+  console.log(`Python executable: ${pythonExe}`);
   console.log(`Script path: ${pythonScript}`);
 
   pythonProcess = spawn(pythonExe, [pythonScript], {
@@ -44,10 +75,21 @@ function startPythonProcess() {
         pythonReady = true;
         console.log("✅ Python is ready!");
       } else if (message.type === "response") {
-        mainWindow.webContents.send("python-response", message.data);
+        // Handle response with requestId
+        const requestId = message.requestId;
+        if (requestId !== undefined && pendingRequests.has(requestId)) {
+          const { resolve } = pendingRequests.get(requestId);
+          pendingRequests.delete(requestId);
+          resolve(message.data);
+        }
       } else if (message.type === "error") {
         console.error("❌ Python error:", message.error);
-        mainWindow.webContents.send("python-error", message.error);
+        const requestId = message.requestId;
+        if (requestId !== undefined && pendingRequests.has(requestId)) {
+          const { reject } = pendingRequests.get(requestId);
+          pendingRequests.delete(requestId);
+          reject(new Error(message.error));
+        }
       }
     } catch (e) {
       // Not JSON, just a log message
@@ -65,18 +107,25 @@ function startPythonProcess() {
   });
 }
 
-// Send command to Python
+/**
+ * Send command to Python with unique request ID
+ */
 function sendToPython(command, data) {
   if (!pythonReady) {
     throw new Error("Python subprocess not ready");
   }
 
-  const message = JSON.stringify({ command, data }) + "\n";
+  const requestId = requestIdCounter++;
+  const message = JSON.stringify({ command, data, requestId }) + "\n";
   pythonProcess.stdin.write(message);
-  console.log(`📤 Sent to Python: ${command}`);
+  console.log(`📤 Sent to Python: ${command} (ID: ${requestId})`);
+
+  return requestId;
 }
 
-// Create the app window
+/**
+ * Create the main window
+ */
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -90,59 +139,82 @@ function createWindow() {
     backgroundColor: "#ffffff",
   });
 
-  // For now, just show a simple HTML page
-  // Later we'll load your React app
+  // Load the test HTML page
   mainWindow.loadFile(path.join(__dirname, "index.html"));
-  mainWindow.webContents.openDevTools(); // Open DevTools automatically
+  mainWindow.webContents.openDevTools();
 }
 
-// IPC Handler: Create Entry
+/**
+ * IPC HANDLERS - Fixed with request ID system
+ */
+
+// Create journal entry
 ipcMain.handle("create-entry", async (event, entryData) => {
   console.log("📝 Creating entry:", entryData);
 
   return new Promise((resolve, reject) => {
-    const responseHandler = (event, response) => {
-      mainWindow.webContents.removeListener("python-response", responseHandler);
-      resolve(response);
-    };
+    try {
+      const requestId = sendToPython("create_entry", entryData);
 
-    const errorHandler = (event, error) => {
-      mainWindow.webContents.removeListener("python-error", errorHandler);
-      reject(new Error(error));
-    };
+      // Store the promise handlers
+      pendingRequests.set(requestId, { resolve, reject });
 
-    mainWindow.webContents.once("python-response", responseHandler);
-    mainWindow.webContents.once("python-error", errorHandler);
-
-    sendToPython("create_entry", entryData);
-
-    setTimeout(() => {
-      mainWindow.webContents.removeListener("python-response", responseHandler);
-      mainWindow.webContents.removeListener("python-error", errorHandler);
-      reject(new Error("Python subprocess timeout"));
-    }, 30000);
+      // Timeout after 30 seconds
+      setTimeout(() => {
+        if (pendingRequests.has(requestId)) {
+          pendingRequests.delete(requestId);
+          reject(new Error("Python subprocess timeout"));
+        }
+      }, 30000);
+    } catch (error) {
+      reject(error);
+    }
   });
 });
 
-// IPC Handler: Get Entries
+// Get recent entries
 ipcMain.handle("get-entries", async (event, limit = 20) => {
   return new Promise((resolve, reject) => {
-    const responseHandler = (event, response) => {
-      mainWindow.webContents.removeListener("python-response", responseHandler);
-      resolve(response);
-    };
+    try {
+      const requestId = sendToPython("get_entries", { limit });
 
-    mainWindow.webContents.once("python-response", responseHandler);
-    sendToPython("get_entries", { limit });
+      pendingRequests.set(requestId, { resolve, reject });
 
-    setTimeout(() => {
-      mainWindow.webContents.removeListener("python-response", responseHandler);
-      reject(new Error("Timeout"));
-    }, 5000);
+      setTimeout(() => {
+        if (pendingRequests.has(requestId)) {
+          pendingRequests.delete(requestId);
+          reject(new Error("Timeout"));
+        }
+      }, 5000);
+    } catch (error) {
+      reject(error);
+    }
   });
 });
 
-// App lifecycle
+// Get statistics
+ipcMain.handle("get-stats", async () => {
+  return new Promise((resolve, reject) => {
+    try {
+      const requestId = sendToPython("get_stats", {});
+
+      pendingRequests.set(requestId, { resolve, reject });
+
+      setTimeout(() => {
+        if (pendingRequests.has(requestId)) {
+          pendingRequests.delete(requestId);
+          reject(new Error("Timeout"));
+        }
+      }, 5000);
+    } catch (error) {
+      reject(error);
+    }
+  });
+});
+
+/**
+ * App Lifecycle
+ */
 app.whenReady().then(() => {
   startPythonProcess();
 
