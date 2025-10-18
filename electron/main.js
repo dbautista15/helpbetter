@@ -17,21 +17,32 @@ let requestIdCounter = 0;
 function getPythonExecutable() {
   if (app.isPackaged) {
     // Production: Use bundled Python
-    return path.join(process.resourcesPath, "python", "python.exe");
-  }
+    const platform = process.platform;
 
-  // Development: Detect OS
-  const platform = process.platform;
-
-  if (platform === "darwin") {
-    // Mac: Try python3 first
-    return "python3";
-  } else if (platform === "win32") {
-    // Windows: Use python
-    return "python";
+    if (platform === "darwin") {
+      // Mac: python-runtime/bin/python3
+      return path.join(process.resourcesPath, "python", "bin", "python3");
+    } else if (platform === "win32") {
+      // Windows: python-runtime/Scripts/python.exe
+      return path.join(
+        process.resourcesPath,
+        "python",
+        "Scripts",
+        "python.exe"
+      );
+    } else {
+      // Linux: python-runtime/bin/python3
+      return path.join(process.resourcesPath, "python", "bin", "python3");
+    }
   } else {
-    // Linux: Try python3
-    return "python3";
+    // Development: Use system Python
+    const platform = process.platform;
+
+    if (platform === "darwin" || platform === "linux") {
+      return "python3";
+    } else {
+      return "python";
+    }
   }
 }
 

@@ -227,7 +227,7 @@ class Database:
         """
         cursor = self.conn.execute(
             """
-            SELECT content, embedding, timestamp
+            SELECT content, embedding, timestamp,mood_rating
             FROM entries
             WHERE embedding IS NOT NULL
             ORDER BY timestamp DESC
@@ -240,7 +240,12 @@ class Database:
             embedding = pickle.loads(row[1])
 
             entries.append(
-                {"text": row[0], "embedding": embedding, "timestamp": row[2]}
+                {
+                    "text": row[0],
+                    "embedding": embedding,
+                    "timestamp": row[2],
+                    "mood": row[3],
+                }
             )
 
         print(f"📦 Retrieved {len(entries)} entries for analysis", flush=True)

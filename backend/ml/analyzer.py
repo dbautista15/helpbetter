@@ -183,6 +183,7 @@ class Analyzer:
                         "text": past_entries[idx]["text"],
                         "similarity": similarity_score,
                         "timestamp": past_entries[idx]["timestamp"],
+                        "mood": past_entries[idx].get("mood", 3),
                     }
                 )
 
