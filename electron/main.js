@@ -91,6 +91,9 @@ function startPythonProcess() {
       PYTHONUNBUFFERED: "1",
       PYTHONIOENCODING: "utf-8",  // Fix emoji encoding on Windows
       DB_PATH: dbPath, // Tell Python which database to use
+      RESOURCES_PATH: app.isPackaged 
+        ? process.resourcesPath 
+        : path.join(__dirname, ".."),  // Development: project root
     },
   });
 
