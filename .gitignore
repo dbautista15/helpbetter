@@ -1,30 +1,40 @@
-# Node modules
-node_modules/
-package-lock.json
-
-# Electron build output
-electron/dist/
-electron/out/
 
 # Python
-__pycache__/
+venv/
+env/
 *.pyc
-*.pyo
-*.pyd
+__pycache__/
+*.py[cod]
+*$py.class
 .Python
-*.so
-*.egg
-*.egg-info/
-dist/
-build/
+
+# ML Models (downloaded at runtime)
+*.model
+*.bin
+models/
+.cache/
+
+# Database (user data)
 *.db
 *.sqlite
+*.sqlite3
 
-# Environment
-.env
-.venv
-venv/
-ENV/
+# Node
+node_modules/
+dist/
+build/
+dist-installer
+
+# Electron build artifacts
+electron/dist/
+python-runtime/
+*.exe
+*.dmg
+*.AppImage
+
+# OS
+.DS_Store
+Thumbs.db
 
 # IDE
 .vscode/
@@ -32,14 +42,9 @@ ENV/
 *.swp
 *.swo
 
-# OS
-.DS_Store
-Thumbs.db
-
 # Logs
 *.log
 npm-debug.log*
 
-# Build files
-frontend/dist/
-frontend/build/
+# Note: package-lock.json is committed for reproducibility
+# This ensures exact dependency versions across environments
