@@ -149,7 +149,7 @@ function createWindow() {
   });
 
   // Load the test HTML page
-  mainWindow.loadFile(path.join(__dirname, "index.html"));
+  mainWindow.loadFile(path.join(__dirname, "dist", "index.html"));
   mainWindow.webContents.openDevTools();
 }
 

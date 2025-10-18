@@ -320,7 +320,7 @@ class Analyzer:
             else:  # negative mood
                 if most_similar["similarity"] > 0.7:
                     insight = (
-                        f"I notice you had similar feelings {time_ago}. "
+                        f"I notice you had similar feelings {time_phrase}. "
                         f"Pattern detected: {similarity_pct}% match. "
                         f"This seems to be a recurring challenge. Consider: "
                         f"What helped you move forward last time?"
