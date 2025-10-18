@@ -1,17 +1,19 @@
 """
-ML Analyzer for Introspect - Pattern Recognition in Journal Entries
+ML Analyzer for Introspect - Multi-Factor Pattern Recognition & Composite Mental State Scoring
 """
 
 import sys
+import re
 import numpy as np
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
-from typing import List, Dict
+from typing import List, Dict, Tuple, Optional
 from datetime import datetime
+from collections import Counter, defaultdict
 
 
 class Analyzer:
-    """ML-powered journal entry analyzer."""
+    """ML-powered journal entry analyzer with composite mental state scoring."""
 
     def __init__(self):
         """Initialize the analyzer with ML model."""
@@ -24,7 +26,7 @@ class Analyzer:
     def analyze_entry(
         self, new_entry_text: str, past_entries: List[Dict], mood_rating: int = 3
     ) -> Dict:
-        """Analyze a new journal entry by comparing to past entries."""
+        """Analyze a new journal entry with multi-factor composite scoring."""
         sys.stderr.write(f"🧠 Analyzing entry: '{new_entry_text[:50]}...'\n")
         sys.stderr.flush()
 
@@ -37,7 +39,7 @@ class Analyzer:
         similar_entries = []
         if len(past_entries) > 0:
             similar_entries = self._find_similar_entries(
-                new_embedding, past_entries, top_k=3
+                new_embedding, past_entries, top_k=5
             )
             sys.stderr.write(f"📊 Found {len(similar_entries)} similar entries\n")
             sys.stderr.flush()
@@ -45,35 +47,106 @@ class Analyzer:
             sys.stderr.write("🔭 No past entries to compare (first entry!)\n")
             sys.stderr.flush()
 
-        # Detect sentiment
-        mood = self._detect_sentiment(new_entry_text)
+        # MULTI-FACTOR ANALYSIS
+
+        # 1. Writing intensity analysis
+        writing_intensity = self._analyze_writing_intensity(new_entry_text)
         sys.stderr.write(
-            f"😊 Detected mood: {mood['detected']} (confidence: {mood['confidence']:.2f})\n"
+            f"✍️  Writing intensity: {writing_intensity['intensity']} "
+            f"({writing_intensity['word_count']} words)\n"
         )
         sys.stderr.flush()
 
-        # Generate summary label
-        summary = self._generate_summary_label(new_entry_text, mood_rating, mood)
-        sys.stderr.write(f"📋 Generated summary: {summary['title']}\n")
+        # 2. Nuanced sentiment detection
+        sentiment = self._detect_nuanced_sentiment(new_entry_text)
+        secondary_text = (
+            f" + {sentiment['secondary_emotion']}" if sentiment["is_mixed"] else ""
+        )
+        sys.stderr.write(
+            f"🎭 Emotional state: {sentiment['primary_emotion']}{secondary_text}\n"
+        )
         sys.stderr.flush()
 
-        # Generate insight
+        # 3. Reflection depth analysis
+        reflection = self._analyze_reflection_depth(new_entry_text)
+        sys.stderr.write(
+            f"🤔 Processing mode: {reflection['mode']} "
+            f"({reflection['question_count']} questions asked)\n"
+        )
+        sys.stderr.flush()
+
+        # 4. Theme analysis (existing + co-occurrence)
+        summary = self._generate_summary_label(new_entry_text, mood_rating, sentiment)
+        theme_context = None
+        if len(past_entries) >= 3:
+            theme_context = self._analyze_theme_cooccurrence(
+                summary["themes"], past_entries
+            )
+            if theme_context:
+                sys.stderr.write(
+                    f"🔗 Theme pattern detected: {theme_context['combination']} "
+                    f"(appears {theme_context['frequency']}x)\n"
+                )
+                sys.stderr.flush()
+
+        # 5. Writing frequency analysis
+        frequency_pattern = None
+        if len(past_entries) >= 2:
+            frequency_pattern = self._analyze_writing_frequency(past_entries)
+            sys.stderr.write(f"📅 Writing pattern: {frequency_pattern['pattern']}\n")
+            sys.stderr.flush()
+
+        # 6. COMPOSITE MENTAL STATE SCORE
+        mental_state = self._calculate_mental_state_score(
+            mood_rating=mood_rating,
+            writing_intensity=writing_intensity,
+            sentiment=sentiment,
+            reflection=reflection,
+        )
+        sys.stderr.write(
+            f"🎯 Composite mental state: {mental_state['composite_score']}/5 "
+            f"(mood rating: {mood_rating}/5)\n"
+        )
+        sys.stderr.flush()
+
+        # Legacy mood field (kept for backwards compatibility)
+        mood = {
+            "detected": (
+                "positive" if mental_state["composite_score"] >= 3 else "negative"
+            ),
+            "confidence": mental_state["confidence"],
+        }
+
+        # Generate insight with all available signals
         insight = self._generate_insight(
-            new_entry_text, similar_entries, mood, past_entries
+            new_entry_text=new_entry_text,
+            similar_entries=similar_entries,
+            mood_rating=mood_rating,
+            mental_state=mental_state,
+            writing_intensity=writing_intensity,
+            sentiment=sentiment,
+            reflection=reflection,
+            theme_context=theme_context,
+            frequency_pattern=frequency_pattern,
+            all_past_entries=past_entries,
         )
-        sys.stderr.write(f"💡 Generated insight\n")
+        sys.stderr.write(f"💡 Generated multi-factor insight\n")
         sys.stderr.flush()
 
         return {
             "embedding": new_embedding,
             "insight": insight,
-            "similar_entries": similar_entries,
-            "mood": mood,
+            "similar_entries": similar_entries[:3],
+            "mood": mood,  # Legacy field
+            "mental_state": mental_state,  # NEW: Composite score
             "summary": summary,
+            "writing_intensity": writing_intensity,  # NEW
+            "sentiment": sentiment,  # NEW
+            "reflection": reflection,  # NEW
         }
 
     def _find_similar_entries(
-        self, new_embedding: np.ndarray, past_entries: List[Dict], top_k: int = 3
+        self, new_embedding: np.ndarray, past_entries: List[Dict], top_k: int = 5
     ) -> List[Dict]:
         """Find the most similar past entries using cosine similarity."""
         if len(past_entries) == 0:
@@ -99,51 +172,396 @@ class Analyzer:
                 )
         return similar
 
-    def _detect_sentiment(self, text: str) -> Dict:
-        """Detect sentiment/mood of the entry."""
-        positive_refs = [
-            "I feel great and happy today",
-            "Everything is wonderful",
-            "I'm excited and optimistic",
-        ]
-        negative_refs = [
-            "I feel sad and worried",
-            "Everything is difficult",
-            "I'm anxious and stressed",
-        ]
+    # ============== NEW: MULTI-FACTOR ANALYSIS METHODS ==============
+
+    def _analyze_writing_intensity(self, text: str) -> Dict:
+        """
+        Analyze writing engagement through length and structure.
+
+        Why it matters: Word count reveals emotional processing depth.
+        - Short entries: Low energy, avoidance, or quick check-in
+        - Long entries: Deep processing, crisis, or breakthrough
+        """
+        words = text.split()
+        word_count = len(words)
+        sentences = [s.strip() for s in text.split(".") if s.strip()]
+        sentence_count = len(sentences)
+        avg_sentence_length = word_count / max(sentence_count, 1)
+
+        # Categorize intensity
+        if word_count > 400:
+            intensity = "high"
+            interpretation = "deep processing"
+        elif word_count > 200:
+            intensity = "medium"
+            interpretation = "engaged reflection"
+        elif word_count > 75:
+            intensity = "moderate"
+            interpretation = "standard check-in"
+        else:
+            intensity = "low"
+            interpretation = "brief note"
+
+        return {
+            "word_count": word_count,
+            "sentence_count": sentence_count,
+            "avg_sentence_length": round(avg_sentence_length, 1),
+            "intensity": intensity,
+            "interpretation": interpretation,
+        }
+
+    def _detect_nuanced_sentiment(self, text: str) -> Dict:
+        """
+        Detect emotional nuance beyond binary positive/negative.
+
+        Why it matters: "Anxious but hopeful" is very different from "anxious and defeated".
+        Captures the complexity of human emotion.
+        """
+        emotion_refs = {
+            "hopeful": [
+                "feeling hopeful",
+                "things might improve",
+                "I'm optimistic",
+                "looking forward",
+            ],
+            "defeated": ["giving up", "nothing works", "hopeless", "can't do this"],
+            "anxious": ["worried", "nervous", "anxious", "scared", "afraid"],
+            "calm": ["peaceful", "calm", "relaxed", "at ease", "tranquil"],
+            "energized": ["motivated", "energized", "excited", "driven", "inspired"],
+            "exhausted": ["tired", "drained", "exhausted", "burnt out", "depleted"],
+            "grateful": ["thankful", "grateful", "blessed", "appreciate", "fortunate"],
+            "angry": ["frustrated", "angry", "irritated", "furious", "mad"],
+            "sad": ["sad", "depressed", "down", "unhappy", "miserable"],
+            "content": ["content", "satisfied", "okay", "fine", "stable"],
+        }
 
         text_embedding = self.model.encode(text).reshape(1, -1)
-        positive_embeddings = self.model.encode(positive_refs)
-        negative_embeddings = self.model.encode(negative_refs)
 
-        positive_sim = cosine_similarity(text_embedding, positive_embeddings).mean()
-        negative_sim = cosine_similarity(text_embedding, negative_embeddings).mean()
+        emotion_scores = {}
+        for emotion, refs in emotion_refs.items():
+            ref_embeddings = self.model.encode(refs)
+            similarity = cosine_similarity(text_embedding, ref_embeddings).mean()
+            emotion_scores[emotion] = float(similarity)
 
-        if positive_sim > negative_sim:
-            detected = "positive"
-            confidence = float((positive_sim - negative_sim + 1) / 2)
+        # Get top 2 emotions
+        top_emotions = sorted(emotion_scores.items(), key=lambda x: x[1], reverse=True)[
+            :2
+        ]
+
+        primary = top_emotions[0][0]
+        secondary = top_emotions[1][0] if len(top_emotions) > 1 else None
+
+        # Check if emotions are mixed (similar scores)
+        is_mixed = False
+        if secondary and abs(top_emotions[0][1] - top_emotions[1][1]) < 0.08:
+            is_mixed = True
+
+        return {
+            "primary_emotion": primary,
+            "secondary_emotion": secondary,
+            "is_mixed": is_mixed,
+            "emotion_scores": emotion_scores,
+            "top_score": top_emotions[0][1],
+        }
+
+    def _analyze_reflection_depth(self, text: str) -> Dict:
+        """
+        Measure active processing vs. passive venting.
+
+        Why it matters: Questions and reflective language signal growth mindset.
+        Venting without reflection can indicate being stuck.
+        """
+        # Count questions
+        question_count = text.count("?")
+
+        # Detect reflective language
+        reflective_phrases = [
+            "i wonder",
+            "i realize",
+            "i realized",
+            "i noticed",
+            "i learned",
+            "maybe",
+            "perhaps",
+            "what if",
+            "i think",
+            "i believe",
+            "i understand",
+            "i see now",
+            "looking back",
+        ]
+
+        text_lower = text.lower()
+        reflection_count = sum(
+            1 for phrase in reflective_phrases if phrase in text_lower
+        )
+
+        # Detect venting/stuck language
+        venting_phrases = [
+            "i hate",
+            "i can't",
+            "i cant",
+            "nothing",
+            "never works",
+            "always",
+            "why does",
+            "why do",
+            "sick of",
+            "so tired of",
+        ]
+
+        venting_count = sum(1 for phrase in venting_phrases if phrase in text_lower)
+
+        # Determine mode
+        if reflection_count > venting_count and question_count > 0:
+            mode = "active_processing"
+        elif reflection_count > venting_count:
+            mode = "reflecting"
+        elif venting_count > reflection_count * 2:
+            mode = "venting"
         else:
-            detected = "negative"
-            confidence = float((negative_sim - positive_sim + 1) / 2)
+            mode = "mixed"
 
-        confidence = max(0.0, min(1.0, confidence))
-        return {"detected": detected, "confidence": confidence}
+        return {
+            "mode": mode,
+            "question_count": question_count,
+            "reflection_markers": reflection_count,
+            "venting_markers": venting_count,
+            "processing_ratio": reflection_count / max(venting_count, 1),
+        }
 
-    def _generate_summary_label(
-        self, text: str, mood_rating: int, mood_analysis: Dict
+    def _analyze_theme_cooccurrence(
+        self, current_themes: List[str], past_entries: List[Dict]
+    ) -> Optional[Dict]:
+        """
+        Find which themes appear together and what that predicts.
+
+        Why it matters: "work" + "sleep" often = burnout.
+        "anxiety" + "relationships" = social stress.
+        Co-occurrence reveals underlying patterns.
+        """
+        if len(current_themes) < 2:
+            return None
+
+        # Build co-occurrence patterns from history
+        cooccurrence = defaultdict(lambda: {"count": 0, "moods": []})
+
+        for entry in past_entries:
+            entry_text = entry.get("text", "")
+            entry_mood = entry.get("mood", 3)
+
+            # Quick theme detection for past entries (simplified)
+            text_lower = entry_text.lower()
+            entry_themes = []
+
+            theme_keywords = {
+                "work": ["work", "job", "meeting", "deadline", "project"],
+                "sleep": ["sleep", "tired", "exhausted", "insomnia"],
+                "anxiety": ["anxiety", "anxious", "worried", "stress"],
+                "relationships": ["relationship", "partner", "friend", "family"],
+                "exercise": ["exercise", "gym", "workout", "run"],
+                "mental_health": ["therapy", "depression", "mental"],
+            }
+
+            for theme, keywords in theme_keywords.items():
+                if any(kw in text_lower for kw in keywords):
+                    entry_themes.append(theme)
+
+            # Track combinations
+            if len(entry_themes) >= 2:
+                # Sort for consistent key
+                combo = "+".join(sorted(entry_themes[:2]))
+                cooccurrence[combo]["count"] += 1
+                cooccurrence[combo]["moods"].append(entry_mood)
+
+        # Find relevant pattern for current entry
+        current_combo_key = "+".join(sorted(current_themes[:2]))
+
+        if current_combo_key in cooccurrence:
+            data = cooccurrence[current_combo_key]
+            if data["count"] >= 3:  # Significant pattern
+                return {
+                    "combination": current_combo_key.replace("+", " + "),
+                    "frequency": data["count"],
+                    "typical_mood": round(np.mean(data["moods"]), 1),
+                }
+
+        return None
+
+    def _analyze_writing_frequency(self, past_entries: List[Dict]) -> Dict:
+        """
+        Understand the user's journaling rhythm and recent changes.
+
+        Why it matters: Writing frequency reveals crisis vs. practice.
+        - Daily entries for days = processing something urgent
+        - Sporadic = reactive journaling (only writes when struggling)
+        """
+        if len(past_entries) < 2:
+            return {"pattern": "new_user"}
+
+        # Calculate days between entries
+        timestamps = sorted(
+            [datetime.fromisoformat(e["timestamp"]) for e in past_entries]
+        )
+        timestamps.append(datetime.now())  # Include current entry
+
+        gaps = [
+            (timestamps[i + 1] - timestamps[i]).days for i in range(len(timestamps) - 1)
+        ]
+
+        avg_gap = np.mean(gaps)
+
+        # Classify pattern
+        if avg_gap <= 1.5:
+            pattern = "daily_practice"
+            description = "writing almost daily"
+        elif avg_gap <= 4:
+            pattern = "regular_practice"
+            description = "writing several times per week"
+        elif avg_gap <= 10:
+            pattern = "weekly_practice"
+            description = "writing weekly"
+        else:
+            pattern = "reactive_journaling"
+            description = "writing when needed"
+
+        # Detect recent acceleration (writing more often lately)
+        recent_gaps = gaps[-5:] if len(gaps) >= 5 else gaps
+        is_accelerating = len(recent_gaps) >= 3 and np.mean(recent_gaps) < avg_gap * 0.5
+
+        return {
+            "pattern": pattern,
+            "description": description,
+            "avg_gap_days": round(avg_gap, 1),
+            "is_accelerating": is_accelerating,
+            "total_entries": len(past_entries) + 1,
+        }
+
+    def _calculate_mental_state_score(
+        self,
+        mood_rating: int,
+        writing_intensity: Dict,
+        sentiment: Dict,
+        reflection: Dict,
     ) -> Dict:
         """
-        Generate a summary label for timeline display.
+        Calculate composite mental state score from multiple signals.
 
-        Returns:
-            {
-                'title': str,        # "Work - Performance Review"
-                'themes': List[str], # ["work", "mental_health"]
-                'emotion': str       # "struggling but persisting"
-            }
+        WHY THIS MATTERS:
+        A user might rate themselves 3/5, but if they're:
+        - Writing long, engaged entries (+)
+        - Asking reflective questions (+)
+        - Processing rather than venting (+)
+
+        Their composite score might be 3.8/5 - they're doing better than they think!
+
+        Conversely, a 4/5 with:
+        - Very short entry (-)
+        - Pure venting, no reflection (-)
+        - Mixed, confused emotions (-)
+
+        Might be a 3.2/5 - something's being suppressed.
         """
+        score = float(mood_rating)
+        adjustments = []
 
-        # Theme categories - semantic clusters of related concepts
+        # Factor 1: Writing engagement (± 0.5)
+        if writing_intensity["intensity"] == "high":
+            score += 0.5
+            adjustments.append("deep engagement (+0.5)")
+        elif writing_intensity["intensity"] == "moderate":
+            score += 0.1
+            adjustments.append("moderate engagement (+0.1)")
+        elif writing_intensity["intensity"] == "low":
+            score -= 0.3
+            adjustments.append("brief entry (-0.3)")
+
+        # Factor 2: Reflection mode (± 0.4)
+        if reflection["mode"] == "active_processing":
+            score += 0.4
+            adjustments.append("active processing (+0.4)")
+        elif reflection["mode"] == "reflecting":
+            score += 0.2
+            adjustments.append("reflective mode (+0.2)")
+        elif reflection["mode"] == "venting":
+            score -= 0.3
+            adjustments.append("venting mode (-0.3)")
+
+        # Factor 3: Emotional clarity (± 0.2)
+        if sentiment["is_mixed"]:
+            score -= 0.2
+            adjustments.append("mixed emotions (-0.2)")
+        elif sentiment["primary_emotion"] in ["hopeful", "grateful", "content", "calm"]:
+            score += 0.2
+            adjustments.append(f"{sentiment['primary_emotion']} (+0.2)")
+        elif sentiment["primary_emotion"] in ["defeated", "exhausted"]:
+            score -= 0.2
+            adjustments.append(f"{sentiment['primary_emotion']} (-0.2)")
+
+        # Factor 4: Question-asking (curiosity signal) (± 0.1)
+        if reflection["question_count"] >= 3:
+            score += 0.1
+            adjustments.append("asking questions (+0.1)")
+
+        # Normalize to 1-5 scale
+        score = max(1.0, min(5.0, score))
+
+        # Calculate confidence based on how much data we have
+        confidence = min(0.85, 0.5 + (len(adjustments) * 0.1))
+
+        is_different = abs(score - mood_rating) >= 0.5
+
+        return {
+            "composite_score": round(score, 1),
+            "mood_rating": mood_rating,
+            "is_different_from_mood": is_different,
+            "adjustments": adjustments,
+            "confidence": confidence,
+            "interpretation": self._interpret_composite_score(
+                score, mood_rating, adjustments
+            ),
+        }
+
+    def _interpret_composite_score(
+        self, composite: float, mood_rating: int, adjustments: List[str]
+    ) -> str:
+        """Generate human-readable interpretation of composite score."""
+        diff = composite - mood_rating
+
+        if abs(diff) < 0.3:
+            return "Your self-assessment aligns with your overall state"
+        elif diff > 0.5:
+            return "You're doing better than your mood rating suggests"
+        elif diff < -0.5:
+            return "There may be underlying challenges beyond your mood rating"
+        else:
+            return "Your overall state is close to your mood rating"
+
+    # ============== LEGACY SENTIMENT (kept for backwards compatibility) ==============
+
+    def _detect_sentiment(self, text: str) -> Dict:
+        """Legacy sentiment detection - now just calls nuanced version."""
+        sentiment = self._detect_nuanced_sentiment(text)
+
+        # Convert to legacy format
+        positive_emotions = {"hopeful", "calm", "energized", "grateful", "content"}
+        detected = (
+            "positive"
+            if sentiment["primary_emotion"] in positive_emotions
+            else "negative"
+        )
+
+        return {
+            "detected": detected,
+            "confidence": sentiment["top_score"],
+        }
+
+    # ============== SUMMARY LABEL (unchanged) ==============
+
+    def _generate_summary_label(
+        self, text: str, mood_rating: int, sentiment: Dict
+    ) -> Dict:
+        """Generate a summary label for timeline display."""
         theme_categories = {
             "work": [
                 "work",
@@ -237,7 +655,6 @@ class Analyzer:
             ],
         }
 
-        # Detect themes using keyword matching
         text_lower = text.lower()
         detected_themes = []
 
@@ -245,7 +662,6 @@ class Analyzer:
             if any(keyword in text_lower for keyword in keywords):
                 detected_themes.append(theme)
 
-        # Default if nothing matched
         if not detected_themes:
             detected_themes = ["personal_reflection"]
 
@@ -259,14 +675,16 @@ class Analyzer:
         else:
             emotion = "difficult and overwhelming"
 
-        # Refine based on detected sentiment
-        if mood_analysis["detected"] == "negative" and mood_rating >= 3:
-            emotion = "processing and reflecting"
+        # Use nuanced sentiment if available
+        if isinstance(sentiment, dict) and "primary_emotion" in sentiment:
+            primary = sentiment["primary_emotion"]
+            if sentiment.get("is_mixed") and sentiment.get("secondary_emotion"):
+                emotion = f"{primary} and {sentiment['secondary_emotion']}"
+            else:
+                emotion = primary
 
-        # Generate title
         primary_theme = detected_themes[0].replace("_", " ").title()
 
-        # Check for specific keywords FIRST (more reliable)
         specific_keywords = {
             "performance review": "Performance Review",
             "quarterly review": "Review",
@@ -285,9 +703,7 @@ class Analyzer:
                 title_subject = label
                 break
 
-        # If no keyword match, try extracting proper nouns
         if not title_subject:
-            # Common words to exclude
             exclude_words = {
                 "I",
                 "The",
@@ -326,7 +742,6 @@ class Analyzer:
             if specific_topics:
                 title_subject = specific_topics[0]
 
-        # Construct final title
         if title_subject:
             title = f"{primary_theme} - {title_subject}"
         else:
@@ -338,100 +753,697 @@ class Analyzer:
             "emotion": emotion,
         }
 
+    # ============== ENHANCED INSIGHT GENERATION ==============
+
     def _generate_insight(
         self,
         new_entry_text: str,
         similar_entries: List[Dict],
-        mood: Dict,
+        mood_rating: int,
+        mental_state: Dict,
+        writing_intensity: Dict,
+        sentiment: Dict,
+        reflection: Dict,
+        theme_context: Optional[Dict],
+        frequency_pattern: Optional[Dict],
         all_past_entries: List[Dict],
     ) -> str:
-        """
-        Generate a contextual insight based on patterns.
-        Quote the user to themselves!
-        """
+        """Generate deeply personalized insights using ALL available signals."""
 
-        # Case 1: First entry ever
+        # Case 1: First entry
         if len(all_past_entries) == 0:
-            return (
-                f"Welcome to your journaling journey! This is your first entry. "
-                f"As you write more, I'll help you spot patterns in your thoughts and emotions."
+            return self._first_entry_insight()
+
+        # Case 2: Early journey (fewer than 3 entries)
+        if len(all_past_entries) < 3:
+            return self._early_journey_insight(
+                len(all_past_entries), mental_state, writing_intensity
             )
 
-        # Case 2: Pattern recognition WITH QUOTES
+        # Case 3: Not enough similar entries for pattern detection
+        if len(similar_entries) < 2:
+            return self._sparse_pattern_insight(
+                len(all_past_entries),
+                mental_state,
+                writing_intensity,
+                sentiment,
+                similar_entries,
+            )
+
+        # Case 4: Rich pattern analysis (3+ entries, 2+ similar matches)
+        patterns = self._analyze_patterns(similar_entries, all_past_entries)
+
+        # Priority 1: Composite score reveals hidden truth
+        if mental_state["is_different_from_mood"]:
+            return self._generate_composite_insight(
+                mental_state,
+                writing_intensity,
+                reflection,
+                sentiment,
+                similar_entries,
+                patterns,
+            )
+
+        # Priority 2: Theme co-occurrence pattern
+        if theme_context:
+            return self._generate_theme_cooccurrence_insight(
+                theme_context, mental_state, similar_entries
+            )
+
+        # Priority 3: Writing frequency pattern
+        if frequency_pattern and frequency_pattern.get("is_accelerating"):
+            return self._generate_frequency_insight(
+                frequency_pattern, mental_state, sentiment
+            )
+
+        # Priority 4: Growth narrative
+        if patterns["has_growth_story"] or patterns["has_decline"]:
+            return self._generate_growth_narrative(
+                similar_entries, mental_state, patterns
+            )
+
+        # Priority 5: Temporal patterns
+        if patterns["temporal_pattern"]:
+            return self._generate_temporal_insight(
+                patterns, similar_entries, mental_state
+            )
+
+        # Priority 6: Enhanced contextual comparison
+        return self._generate_contextual_comparison(
+            similar_entries, mental_state, patterns, reflection
+        )
+
+    def _analyze_patterns(
+        self, similar_entries: List[Dict], all_entries: List[Dict]
+    ) -> Dict:
+        """Detect patterns across multiple entries for personalization."""
+
+        # Temporal clustering
+        timestamps = [datetime.fromisoformat(e["timestamp"]) for e in similar_entries]
+        weekdays = [t.strftime("%A") for t in timestamps]
+        weekday_counts = Counter(weekdays)
+        dominant_weekday = weekday_counts.most_common(1)[0] if weekday_counts else None
+
+        # Mood trajectory analysis
+        sorted_by_time = sorted(similar_entries, key=lambda x: x["timestamp"])
+        moods = [e.get("mood", 3) for e in sorted_by_time]
+
+        # Detect growth or decline
+        has_growth = False
+        has_decline = False
+        if len(moods) >= 3:
+            earliest_avg = np.mean(moods[:2])
+            latest_avg = np.mean(moods[-2:])
+            if latest_avg > earliest_avg + 0.5:
+                has_growth = True
+            elif latest_avg < earliest_avg - 0.5:
+                has_decline = True
+
+        # Extract user's personal phrases
+        user_phrases = self._extract_key_phrases(all_entries)
+
+        # Find action patterns in past entries
+        actions_taken = self._extract_actions(similar_entries)
+
+        return {
+            "has_growth_story": has_growth,
+            "has_decline": has_decline,
+            "temporal_pattern": (
+                dominant_weekday
+                if dominant_weekday and dominant_weekday[1] >= 2
+                else None
+            ),
+            "mood_trajectory": moods,
+            "user_phrases": user_phrases,
+            "actions_taken": actions_taken,
+        }
+
+    def _extract_key_phrases(
+        self, entries: List[Dict], min_count: int = 2
+    ) -> List[str]:
+        """Extract frequently used 2-3 word phrases from user's entries."""
+        if len(entries) < 3:
+            return []
+
+        all_text = " ".join([e["text"].lower() for e in entries])
+        words = re.findall(r"\b\w+\b", all_text)
+
+        # Extract bigrams and trigrams
+        phrases = []
+        for i in range(len(words) - 1):
+            bigram = f"{words[i]} {words[i+1]}"
+            phrases.append(bigram)
+
+            if i < len(words) - 2:
+                trigram = f"{words[i]} {words[i+1]} {words[i+2]}"
+                phrases.append(trigram)
+
+        phrase_counts = Counter(phrases)
+
+        # Filter out generic phrases
+        generic_stopwords = {
+            "i feel",
+            "i am",
+            "i was",
+            "i have",
+            "i want",
+            "i think",
+            "i need",
+            "i can",
+            "i will",
+            "i would",
+            "i should",
+            "it is",
+            "it was",
+            "to be",
+            "in the",
+            "of the",
+            "and i",
+        }
+
+        meaningful_phrases = [
+            phrase
+            for phrase, count in phrase_counts.items()
+            if count >= min_count
+            and phrase not in generic_stopwords
+            and len(phrase) > 5
+        ]
+
+        return meaningful_phrases[:5]
+
+    def _extract_actions(self, entries: List[Dict]) -> List[str]:
+        """Extract action-oriented phrases (what user did in past to cope/improve)."""
+        actions = []
+
+        action_patterns = [
+            r"talked to (\w+)",
+            r"went for a (\w+)",
+            r"decided to ([\w\s]{3,20})",
+            r"started ([\w\s]{3,20})",
+            r"tried ([\w\s]{3,20})",
+            r"called (\w+)",
+            r"reached out to (\w+)",
+        ]
+
+        for entry in entries:
+            text = entry["text"].lower()
+            for pattern in action_patterns:
+                matches = re.findall(pattern, text)
+                for match in matches:
+                    action = match.strip()
+                    if len(action) > 2:
+                        actions.append(action)
+
+        return list(set(actions))[:3]
+
+    def _extract_meaningful_quote(
+        self, text: str, prioritize_actions: bool = False
+    ) -> str:
+        """Extract the most meaningful sentence(s) from a past entry."""
+        sentences = [s.strip() for s in text.split(".") if s.strip()]
+
+        if len(sentences) == 0:
+            return text[:200]
+
+        # Score sentences by meaningfulness
+        scored_sentences = []
+
+        action_keywords = [
+            "decided",
+            "tried",
+            "started",
+            "realized",
+            "learned",
+            "talked",
+            "called",
+            "went",
+            "made",
+            "chose",
+        ]
+        emotion_keywords = [
+            "feel",
+            "felt",
+            "feeling",
+            "emotion",
+            "mood",
+            "happy",
+            "sad",
+            "anxious",
+            "relieved",
+            "grateful",
+        ]
+
+        for sent in sentences:
+            score = 0
+            sent_lower = sent.lower()
+            word_count = len(sent.split())
+
+            # Prioritize action sentences
+            if any(word in sent_lower for word in action_keywords):
+                score += 4
+
+            # Value emotional content
+            if any(word in sent_lower for word in emotion_keywords):
+                score += 2
+
+            # Prefer substantial sentences (not too short, not too long)
+            if 8 <= word_count <= 20:
+                score += 2
+            elif word_count > 20:
+                score += 1
+
+            scored_sentences.append((score, sent))
+
+        # Sort by score and take best 1-2 sentences
+        scored_sentences.sort(reverse=True, key=lambda x: x[0])
+
+        if len(scored_sentences) >= 2 and scored_sentences[0][0] > 0:
+            best = [scored_sentences[0][1], scored_sentences[1][1]]
+            quote = ". ".join(best) + "."
+        else:
+            quote = scored_sentences[0][1] + "."
+
+        # Truncate if too long
+        if len(quote) > 200:
+            quote = quote[:197] + "..."
+
+        return quote
+
+    def _format_time_ago(self, timestamp: str) -> str:
+        """Format timestamp as human-readable 'time ago' string."""
+        ts = datetime.fromisoformat(timestamp)
+        days_ago = (datetime.now() - ts).days
+
+        if days_ago == 0:
+            return "earlier today"
+        elif days_ago == 1:
+            return "yesterday"
+        elif days_ago < 7:
+            return f"{days_ago} days ago"
+        elif days_ago < 30:
+            weeks = days_ago // 7
+            return f"{weeks} week{'s' if weeks > 1 else ''} ago"
+        elif days_ago < 365:
+            months = days_ago // 30
+            return f"{months} month{'s' if months > 1 else ''} ago"
+        else:
+            years = days_ago // 365
+            return f"{years} year{'s' if years > 1 else ''} ago"
+
+    # ============== NEW: COMPOSITE SCORE INSIGHT METHODS ==============
+
+    def _generate_composite_insight(
+        self,
+        mental_state: Dict,
+        writing_intensity: Dict,
+        reflection: Dict,
+        sentiment: Dict,
+        similar_entries: List[Dict],
+        patterns: Dict,
+    ) -> str:
+        """
+        Generate insight when composite score reveals hidden truth.
+
+        This is the MOST IMPACTFUL new feature - telling users they're doing
+        better (or worse) than they think based on multiple signals.
+        """
+        composite = mental_state["composite_score"]
+        mood_rating = mental_state["mood_rating"]
+        diff = composite - mood_rating
+
+        # Build context from past similar entries
+        context = ""
         if len(similar_entries) > 0:
             most_similar = similar_entries[0]
+            time_ago = self._format_time_ago(most_similar["timestamp"])
+            context = f" {time_ago.capitalize()}, you felt similarly."
 
-            # Parse timestamp
-            timestamp = datetime.fromisoformat(most_similar["timestamp"])
-            days_ago = (datetime.now() - timestamp).days
+        if diff >= 0.7:
+            # Composite score is MUCH better than mood rating
+            # They're being too hard on themselves
+            reasons = []
+            if writing_intensity["intensity"] in ["high", "medium"]:
+                reasons.append(
+                    f"you're writing {writing_intensity['word_count']} words of engaged reflection"
+                )
+            if reflection["mode"] in ["active_processing", "reflecting"]:
+                reasons.append(
+                    f"you're asking yourself {reflection['question_count']} questions"
+                )
+            if sentiment["primary_emotion"] in ["hopeful", "grateful", "calm"]:
+                reasons.append(f"your emotional tone is {sentiment['primary_emotion']}")
 
-            if days_ago == 0:
-                time_phrase = "earlier today"
-            elif days_ago == 1:
-                time_phrase = "yesterday"
-            elif days_ago < 7:
-                time_phrase = f"{days_ago} days ago"
-            elif days_ago < 30:
-                weeks = days_ago // 7
-                time_phrase = f"{weeks} week{'s' if weeks > 1 else ''} ago"
-            else:
-                months = days_ago // 30
-                time_phrase = f"{months} month{'s' if months > 1 else ''} ago"
+            reasons_text = (
+                ", ".join(reasons)
+                if reasons
+                else "you're engaging deeply with your thoughts"
+            )
 
-            # Extract quote
-            past_text = most_similar["text"]
-            sentences = past_text.split(". ")
+            return (
+                f"You rated yourself {mood_rating}/5, but your composite wellbeing score is {composite}/5. "
+                f"Why the difference? Because {reasons_text}. "
+                f"The number you gave yourself doesn't capture the work you're doing here.{context} "
+                f"You're processing, not just surviving. That's growth."
+            )
 
-            if len(sentences) >= 2:
-                quote = f"{sentences[0]}. {sentences[1]}."
-            else:
-                quote = sentences[0] if sentences else past_text[:150]
+        elif diff >= 0.4:
+            # Modestly better than mood rating
+            return (
+                f"You rated yourself {mood_rating}/5, but looking at the full picture—"
+                f"your {writing_intensity['word_count']}-word entry, your {reflection['mode']} mode, "
+                f"your {sentiment['primary_emotion']} emotional state—I'd say you're closer to {composite}/5. "
+                f"{mental_state['interpretation']}.{context} "
+                f"You're doing better than you might feel in this moment."
+            )
 
-            if len(quote) > 200:
-                quote = quote[:197] + "..."
+        elif diff <= -0.7:
+            # Composite score is MUCH worse than mood rating
+            # Something's being suppressed or avoided
+            warning_signs = []
+            if writing_intensity["intensity"] == "low":
+                warning_signs.append("this is a very brief entry")
+            if reflection["mode"] == "venting":
+                warning_signs.append("you're venting without reflection")
+            if sentiment["is_mixed"]:
+                warning_signs.append(
+                    f"you're feeling both {sentiment['primary_emotion']} and {sentiment['secondary_emotion']}"
+                )
 
-            # Generate insight based on mood
-            if mood["detected"] == "negative":
-                if most_similar.get("mood", 3) < 3:
-                    insight = (
-                        f"You've felt this way before. {time_phrase}, you wrote:\n\n"
-                        f'"{quote}"\n\n'
-                        f"This pattern seems familiar. What helped you move forward then?"
-                    )
-                else:
-                    insight = (
-                        f"You've navigated similar feelings before. {time_phrase}, you wrote:\n\n"
-                        f'"{quote}"\n\n'
-                        f"You found a way through. What was different that time?"
-                    )
-            else:
-                if most_similar.get("mood", 3) >= 4:
-                    insight = (
-                        f"This positive feeling has happened before! {time_phrase}, you wrote:\n\n"
-                        f'"{quote}"\n\n'
-                        f"You're building a pattern of what works for you."
-                    )
-                else:
-                    insight = (
-                        f"You're in a better place now. {time_phrase} you wrote:\n\n"
-                        f'"{quote}"\n\n'
-                        f"Look at how far you've come. What changed?"
-                    )
+            signs_text = (
+                " and ".join(warning_signs)
+                if warning_signs
+                else "there are underlying signals"
+            )
 
-        # Case 3: No strong patterns
+            return (
+                f"You rated yourself {mood_rating}/5, but I'm noticing something beneath the surface. "
+                f"Your composite score is {composite}/5 because {signs_text}. "
+                f"{context} Sometimes we minimize our struggles. "
+                f"What's being left unsaid here?"
+            )
+
+        elif diff <= -0.4:
+            # Modestly worse than mood rating
+            return (
+                f"You rated yourself {mood_rating}/5, but reading between the lines—"
+                f"the brevity of your words ({writing_intensity['word_count']} words), "
+                f"the {sentiment['primary_emotion']} undertone—suggests you might be at {composite}/5. "
+                f"{mental_state['interpretation']}. "
+                f"What are you not letting yourself feel right now?"
+            )
+
         else:
-            entry_count = len(all_past_entries) + 1
+            # Should not reach here, but fallback
+            return self._generate_contextual_comparison(
+                similar_entries, mental_state, patterns, reflection
+            )
 
-            if mood["detected"] == "positive":
-                insight = (
-                    f"You're in a good headspace today. This is entry #{entry_count}. "
-                    f"Keep writing - patterns become clearer over time."
+    def _generate_theme_cooccurrence_insight(
+        self,
+        theme_context: Dict,
+        mental_state: Dict,
+        similar_entries: List[Dict],
+    ) -> str:
+        """Generate insight when theme co-occurrence pattern is detected."""
+
+        combination = theme_context["combination"]
+        frequency = theme_context["frequency"]
+        typical_mood = theme_context["typical_mood"]
+
+        most_similar = similar_entries[0]
+        time_ago = self._format_time_ago(most_similar["timestamp"])
+        quote = self._extract_meaningful_quote(most_similar["text"])
+
+        composite = mental_state["composite_score"]
+
+        return (
+            f"I'm seeing a familiar pattern. When you write about {combination}, "
+            f"it's happened {frequency} times before, and your typical state is around {typical_mood}/5. "
+            f"Today you're at {composite}/5. {time_ago.capitalize()}, you wrote:\n"
+            f'"{quote}"\n\n'
+            f"This combination of themes tends to cluster together for you. "
+            f"What is it about {combination.split(' + ')[0]} and {combination.split(' + ')[1]} "
+            f"that brings them up at the same time? Understanding this connection might reveal something important."
+        )
+
+    def _generate_frequency_insight(
+        self,
+        frequency_pattern: Dict,
+        mental_state: Dict,
+        sentiment: Dict,
+    ) -> str:
+        """Generate insight when writing frequency has changed dramatically."""
+
+        pattern = frequency_pattern["description"]
+        total = frequency_pattern["total_entries"]
+        composite = mental_state["composite_score"]
+
+        return (
+            f"You're entry #{total}, and I've noticed something: you've accelerated your writing recently. "
+            f"Usually you're {pattern}, but lately you've been writing much more often. "
+            f"This acceleration often signals you're processing something significant. "
+            f"Today you're at {composite}/5 and feeling {sentiment['primary_emotion']}. "
+            f"When you write this frequently, what's usually driving it? "
+            f"What are you working through right now?"
+        )
+
+    def _generate_growth_narrative(
+        self,
+        similar_entries: List[Dict],
+        mental_state: Dict,
+        patterns: Dict,
+    ) -> str:
+        """Generate insight highlighting growth or decline trajectory."""
+
+        sorted_entries = sorted(similar_entries, key=lambda x: x["timestamp"])
+        earliest = sorted_entries[0]
+        latest = sorted_entries[-1]
+
+        earliest_time = self._format_time_ago(earliest["timestamp"])
+        latest_time = self._format_time_ago(latest["timestamp"])
+
+        earliest_mood = earliest.get("mood", 3)
+        latest_mood = latest.get("mood", 3)
+        composite = mental_state["composite_score"]
+
+        # Extract meaningful quote from the journey
+        quote = self._extract_meaningful_quote(
+            earliest["text"], prioritize_actions=True
+        )
+
+        if patterns["has_growth_story"]:
+            # User is improving over time
+            if composite >= latest_mood:
+                return (
+                    f"You're making real progress with this. Looking at your journey:\n\n"
+                    f"{earliest_time.capitalize()}, you were at {earliest_mood}/5 and wrote:\n"
+                    f'"{quote}"\n\n'
+                    f"{latest_time.capitalize()}, you reached {latest_mood}/5. "
+                    f"Today your composite state is {composite}/5. "
+                    f"This upward trajectory isn't luck—it's the result of how you're showing up for yourself. "
+                    f"What's working for you?"
                 )
             else:
-                insight = (
-                    f"I hear that things are challenging right now. "
-                    f"This is entry #{entry_count}. Writing itself is an act of courage. "
-                    f"Patterns will emerge as you continue."
+                return (
+                    f"You've navigated this before, and you've grown through it. {earliest_time.capitalize()}, "
+                    f"you were at {earliest_mood}/5. By {latest_time}, you'd moved to {latest_mood}/5. "
+                    f"Today feels like {composite}/5, a step back perhaps, but your history shows you know how to move forward. "
+                    f"What helped you before?"
                 )
 
-        return insight
+        else:  # has_decline
+            # User is struggling more over time
+            if patterns["actions_taken"]:
+                actions = ", ".join(patterns["actions_taken"][:2])
+                return (
+                    f"This theme has been more challenging lately. {earliest_time.capitalize()}, "
+                    f"you were at {earliest_mood}/5. Now you're at {composite}/5. "
+                    f"Looking back, I see you tried {actions}. "
+                    f"Sometimes what worked before needs adjustment. What feels different now, "
+                    f"and what might you need that you didn't before?"
+                )
+            else:
+                return (
+                    f"I notice this has been weighing on you more over time. "
+                    f"{earliest_time.capitalize()} you wrote:\n"
+                    f'"{quote}"\n\n'
+                    f"You were at {earliest_mood}/5 then, and you're at {composite}/5 now. "
+                    f"The fact that you keep showing up to write about this shows strength. "
+                    f"What support do you need right now?"
+                )
+
+    def _generate_temporal_insight(
+        self,
+        patterns: Dict,
+        similar_entries: List[Dict],
+        mental_state: Dict,
+    ) -> str:
+        """Generate insight about temporal patterns."""
+
+        weekday, count = patterns["temporal_pattern"]
+        most_similar = similar_entries[0]
+        time_ago = self._format_time_ago(most_similar["timestamp"])
+        composite = mental_state["composite_score"]
+
+        quote = self._extract_meaningful_quote(most_similar["text"])
+
+        if count >= 3:
+            pattern_strength = "consistently"
+        else:
+            pattern_strength = "often"
+
+        return (
+            f"I'm noticing a pattern: you {pattern_strength} write about this on {weekday}s. "
+            f"{time_ago.capitalize()}, you wrote:\n"
+            f'"{quote}"\n\n'
+            f"Today you're at {composite}/5. Is there something about {weekday}s "
+            f"that brings this up? Sometimes awareness of timing reveals what triggers these feelings."
+        )
+
+    def _generate_contextual_comparison(
+        self,
+        similar_entries: List[Dict],
+        mental_state: Dict,
+        patterns: Dict,
+        reflection: Dict,
+    ) -> str:
+        """Enhanced single-entry comparison with added context."""
+
+        most_similar = similar_entries[0]
+        time_ago = self._format_time_ago(most_similar["timestamp"])
+        past_mood = most_similar.get("mood", 3)
+        composite = mental_state["composite_score"]
+
+        # Extract meaningful quote
+        quote = self._extract_meaningful_quote(
+            most_similar["text"], prioritize_actions=(past_mood >= 3 and composite < 3)
+        )
+
+        # Add personalization from user's phrases if available
+        personalization = ""
+        if patterns.get("user_phrases"):
+            phrase = patterns["user_phrases"][0]
+            personalization = f"I notice you often write about '{phrase}'. "
+
+        # Determine tone based on composite score
+        if composite < 3:
+            # Current state is difficult
+            if past_mood < 3:
+                # Both entries are difficult
+                if patterns.get("actions_taken"):
+                    action = patterns["actions_taken"][0]
+                    return (
+                        f"{personalization}You've felt this way before. {time_ago.capitalize()}, "
+                        f"you were also at {past_mood}/5 and wrote:\n"
+                        f'"{quote}"\n\n'
+                        f"I see that in the past you {action}. Did that help? "
+                        f"Today you're at {composite}/5. Do you need to try something different this time?"
+                    )
+                else:
+                    return (
+                        f"{personalization}This feeling is familiar. {time_ago.capitalize()}, "
+                        f"you wrote:\n"
+                        f'"{quote}"\n\n'
+                        f"You were at {past_mood}/5 then, and {composite}/5 now. "
+                        f"What did you need then? Is it the same now, or has something shifted?"
+                    )
+            else:
+                # Past was better, now struggling
+                return (
+                    f"{personalization}You've been in a better place with this before. "
+                    f"{time_ago.capitalize()}, you were at {past_mood}/5 and wrote:\n"
+                    f'"{quote}"\n\n'
+                    f"Today you're at {composite}/5. You've navigated this territory before. "
+                    f"What was different then that supported you?"
+                )
+        else:
+            # Current state is positive or neutral
+            if past_mood >= 4:
+                # Both entries are positive
+                return (
+                    f"{personalization}This positive feeling is becoming a pattern! "
+                    f"{time_ago.capitalize()}, you were at {past_mood}/5 and wrote:\n"
+                    f'"{quote}"\n\n'
+                    f"Today you're at {composite}/5. You're learning what works for you. "
+                    f"What are the common threads between then and now?"
+                )
+            else:
+                # Growth from difficult to positive
+                return (
+                    f"{personalization}Look at how far you've come. {time_ago.capitalize()}, "
+                    f"you were at {past_mood}/5 and wrote:\n"
+                    f'"{quote}"\n\n'
+                    f"Today you're at {composite}/5. That's real progress. "
+                    f"What changed? Understanding this can help you recreate it when you need it."
+                )
+
+    # ============== BASIC INSIGHT METHODS (simplified, use composite score) ==============
+
+    def _first_entry_insight(self) -> str:
+        """Welcoming message for the very first entry."""
+        return (
+            "Welcome to your journaling journey! This is your first entry. "
+            "As you continue writing, I'll analyze not just your mood, but how you're writing—"
+            "your engagement level, emotional complexity, and processing style. "
+            "Together, these create a complete picture of your mental state over time. "
+            "Every entry is a step toward deeper self-understanding."
+        )
+
+    def _early_journey_insight(
+        self, entry_count: int, mental_state: Dict, writing_intensity: Dict
+    ) -> str:
+        """Encouraging message for entries 2-3."""
+        composite = mental_state["composite_score"]
+        interpretation = mental_state["interpretation"]
+
+        if composite >= 3.5:
+            return (
+                f"You're building a meaningful practice. This is entry #{entry_count + 1}. "
+                f"Your composite wellbeing score is {composite}/5—{interpretation.lower()}. "
+                f"I'm tracking not just your mood, but your writing patterns, emotional complexity, "
+                f"and how you process thoughts. Keep going, patterns will emerge."
+            )
+        else:
+            return (
+                f"Thank you for showing up, even when things are difficult. "
+                f"This is entry #{entry_count + 1}. Your composite score is {composite}/5. "
+                f"You wrote {writing_intensity['word_count']} words today—"
+                f"that act of putting feelings into words is powerful. "
+                f"Keep going. Insights will emerge as your journal grows."
+            )
+
+    def _sparse_pattern_insight(
+        self,
+        entry_count: int,
+        mental_state: Dict,
+        writing_intensity: Dict,
+        sentiment: Dict,
+        similar_entries: List[Dict],
+    ) -> str:
+        """Insight when not enough similar entries exist."""
+        composite = mental_state["composite_score"]
+
+        if len(similar_entries) == 1:
+            most_similar = similar_entries[0]
+            time_ago = self._format_time_ago(most_similar["timestamp"])
+
+            return (
+                f"This reminds me of something you wrote {time_ago}. "
+                f"You're at entry #{entry_count + 1} now (composite score: {composite}/5). "
+                f"Themes are starting to emerge. A few more entries and I'll be able to show you "
+                f"deeper patterns in how you process these experiences."
+            )
+        else:
+            if composite >= 3.5:
+                return (
+                    f"Entry #{entry_count + 1}. Your composite score is {composite}/5—"
+                    f"you're {sentiment['primary_emotion']} and writing with {writing_intensity['intensity']} engagement. "
+                    f"This is a fresh perspective compared to recent entries. These shifts are worth noticing."
+                )
+            else:
+                return (
+                    f"Entry #{entry_count + 1}. I can sense you're processing something new here. "
+                    f"Your composite score is {composite}/5, shaped by your {sentiment['primary_emotion']} state "
+                    f"and {writing_intensity['interpretation']}. "
+                    f"As you continue, connections to past experiences may reveal themselves."
+                )
