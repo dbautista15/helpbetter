@@ -35,12 +35,25 @@ function getPythonExecutable() {
       return path.join(process.resourcesPath, "python", "bin", "python3");
     }
   } else {
-    // Development: Use system Python
+    // Development: Use python-runtime venv
     const platform = process.platform;
+    const runtimePath = path.join(__dirname, "python-runtime");
 
     if (platform === "darwin" || platform === "linux") {
+      // Check if python-runtime exists
+      const runtimePython = path.join(runtimePath, "bin", "python");
+      if (require("fs").existsSync(runtimePython)) {
+        console.log(`✅ Using python-runtime: ${runtimePython}`);
+        return runtimePython;
+      }
       return "python3";
     } else {
+      // Windows
+      const runtimePython = path.join(runtimePath, "Scripts", "python.exe");
+      if (require("fs").existsSync(runtimePython)) {
+        console.log(`✅ Using python-runtime: ${runtimePython}`);
+        return runtimePython;
+      }
       return "python";
     }
   }
@@ -76,6 +89,7 @@ function startPythonProcess() {
     env: {
       ...process.env,
       PYTHONUNBUFFERED: "1",
+      PYTHONIOENCODING: "utf-8",  // Fix emoji encoding on Windows
       DB_PATH: dbPath, // Tell Python which database to use
     },
   });
