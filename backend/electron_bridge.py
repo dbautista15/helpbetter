@@ -1,23 +1,52 @@
 """
-Electron Bridge - Python Subprocess
+Electron Bridge - Python Subprocess with Database & ML Integration
 Communicates with Electron via stdin/stdout using JSON messages.
 
-This is NOT an HTTP server - it's a subprocess that reads from stdin
-and writes to stdout. This proves true offline capability.
+ARCHITECTURE:
+- Runs as subprocess spawned by Electron
+- Reads commands from stdin (JSON)
+- Writes responses to stdout (JSON)
+- 100% offline (no HTTP, no network)
+- Integrates database and ML analyzer
 
-Protocol:
-- Electron sends: {"command": "create_entry", "data": {...}, "requestId": 123}
-- Python returns: {"type": "response", "data": {...}, "requestId": 123}
-- Python errors: {"type": "error", "error": "...", "requestId": 123}
+FLOW:
+User writes entry → Electron IPC → This script → Database + ML → Response → Electron → User
 """
 
 import sys
 import json
-import time
+import os
+from database import Database
+from ml.analyzer import Analyzer
+
+# Initialize database
+# Uses environment variable set by Electron, or falls back to local file
+db_path = os.getenv("DB_PATH", os.path.join(os.path.dirname(__file__), "journal.db"))
+db = Database(db_path)
+
+# Initialize ML analyzer (loads model once at startup)
+sys.stderr.write("🔄 Loading ML analyzer...\n")
+sys.stderr.flush()
+analyzer = Analyzer()
+sys.stderr.write("✅ ML analyzer ready\n")
+sys.stderr.flush()
 
 
 def send_message(msg_type, data=None, error=None, request_id=None):
-    """Send JSON message to Electron via stdout."""
+    """
+    Send JSON message to Electron via stdout.
+
+    Protocol:
+    - ready: Signal that Python is initialized
+    - response: Successful command result
+    - error: Command failed with error message
+
+    Args:
+        msg_type: 'ready', 'response', or 'error'
+        data: Response data (for 'response' type)
+        error: Error message (for 'error' type)
+        request_id: ID to match request with response
+    """
     message = {"type": msg_type}
     if data is not None:
         message["data"] = data
@@ -32,38 +61,63 @@ def send_message(msg_type, data=None, error=None, request_id=None):
 
 def handle_create_entry(data, request_id):
     """
-    Handle create_entry command.
+    Handle create_entry command - FULL INTEGRATION!
 
-    For now, returns mock data.
-    Later, Person 1 (ML) will add real analysis here.
-    Later, Person 2 (Database) will add real database save here.
+    WORKFLOW:
+    1. Save entry to database (without embedding yet)
+    2. Get past entries for ML comparison
+    3. Run ML analysis (generate embedding + find patterns)
+    4. Update database with embedding
+    5. Return analysis to Electron
+
+    Args:
+        data: {
+            'content': str,      # Journal entry text
+            'mood_rating': int   # 1-5 scale
+        }
+        request_id: Unique ID for this request
     """
     try:
         content = data.get("content", "")
         mood_rating = data.get("mood_rating", 3)
 
-        # Log to stderr (so Electron can see it, but it doesn't interfere with JSON)
-        sys.stderr.write(f"📝 Processing entry: {content[:50]}...\n")
+        sys.stderr.write(f"📝 Processing entry (mood: {mood_rating}/5)...\n")
         sys.stderr.flush()
 
-        # Simulate some processing time
-        time.sleep(1)
+        # Step 1: Save entry to database (without embedding yet - faster UX)
+        entry_id = db.save_entry(content=content, mood_rating=mood_rating)
+        sys.stderr.write(f"✅ Entry saved: {entry_id}\n")
+        sys.stderr.flush()
 
-        # Mock response (later this will be real ML analysis + database save)
+        # Step 2: Get past entries for ML comparison
+        past_entries = db.get_all_entries_for_analysis()
+        sys.stderr.write(
+            f"📦 Retrieved {len(past_entries)} past entries for analysis\n"
+        )
+        sys.stderr.flush()
+
+        # Step 3: Run ML analysis
+        sys.stderr.write(f"🧠 Running ML analysis...\n")
+        sys.stderr.flush()
+
+        analysis = analyzer.analyze_entry(content, past_entries)
+
+        sys.stderr.write(
+            f"✅ ML analysis complete: {analysis['mood']['detected']} mood\n"
+        )
+        sys.stderr.flush()
+
+        # Step 4: Update database with embedding
+        db.update_embedding(entry_id, analysis["embedding"], analysis)
+        sys.stderr.write(f"✅ Embedding saved to database\n")
+        sys.stderr.flush()
+
+        # Step 5: Format response for Electron
         response = {
-            "entry_id": 1,
-            "insight": f"This is a test insight! Your mood rating was {mood_rating}/5. Once we connect the ML model, you'll see real pattern analysis here.",
-            "similar_entries": [
-                {
-                    "text": "This is a mock similar entry from your past",
-                    "similarity": 0.85,
-                    "timestamp": "2024-01-15T10:30:00Z",
-                }
-            ],
-            "mood": {
-                "detected": "positive" if mood_rating >= 3 else "negative",
-                "confidence": 0.75,
-            },
+            "entry_id": entry_id,
+            "insight": analysis["insight"],
+            "similar_entries": analysis["similar_entries"],
+            "mood": analysis["mood"],
         }
 
         send_message("response", data=response, request_id=request_id)
@@ -71,42 +125,35 @@ def handle_create_entry(data, request_id):
     except Exception as e:
         sys.stderr.write(f"❌ Error in create_entry: {e}\n")
         sys.stderr.flush()
+        import traceback
+
+        traceback.print_exc(file=sys.stderr)
         send_message("error", error=str(e), request_id=request_id)
 
 
 def handle_get_entries(data, request_id):
     """
-    Get recent entries.
+    Get recent entries from database.
 
-    For now, returns mock data.
-    Later, Person 2 (Database) will query real database here.
+    Used for timeline view in UI.
+    Does NOT include embeddings (too large for UI).
+
+    Args:
+        data: {'limit': int}  # Number of entries to retrieve
+        request_id: Unique ID for this request
     """
     try:
         limit = data.get("limit", 20)
 
-        sys.stderr.write(f"📥 Getting {limit} entries...\n")
+        sys.stderr.write(f"📥 Getting {limit} entries from database...\n")
         sys.stderr.flush()
 
-        # Mock entries (later this will query real database)
-        response = {
-            "entries": [
-                {
-                    "id": 1,
-                    "content": "Today I learned how Electron and Python communicate via IPC!",
-                    "mood_rating": 5,
-                    "timestamp": "2024-01-15T10:30:00Z",
-                    "insight": "You seem excited about learning new technology",
-                },
-                {
-                    "id": 2,
-                    "content": "Working on the hackathon project. Making good progress.",
-                    "mood_rating": 4,
-                    "timestamp": "2024-01-14T15:20:00Z",
-                    "insight": "Productive day with steady focus",
-                },
-            ]
-        }
+        entries = db.get_recent_entries(limit=limit)
 
+        sys.stderr.write(f"✅ Retrieved {len(entries)} entries\n")
+        sys.stderr.flush()
+
+        response = {"entries": entries}
         send_message("response", data=response, request_id=request_id)
 
     except Exception as e:
@@ -117,23 +164,26 @@ def handle_get_entries(data, request_id):
 
 def handle_get_stats(data, request_id):
     """
-    Get statistics.
+    Get statistics from database.
 
-    For now, returns mock data.
-    Later, Person 2 (Database) will calculate real stats here.
+    Used for dashboard display.
+
+    Args:
+        data: {} (no parameters needed)
+        request_id: Unique ID for this request
     """
     try:
-        sys.stderr.write(f"📊 Getting statistics...\n")
+        sys.stderr.write(f"📊 Calculating statistics...\n")
         sys.stderr.flush()
 
-        response = {
-            "total_entries": 42,
-            "average_mood": 3.8,
-            "entries_this_week": 7,
-            "most_common_theme": "productivity and learning",
-        }
+        stats = db.get_stats()
 
-        send_message("response", data=response, request_id=request_id)
+        sys.stderr.write(
+            f"✅ Stats: {stats['total_entries']} entries, avg mood {stats['avg_mood']}\n"
+        )
+        sys.stderr.flush()
+
+        send_message("response", data=stats, request_id=request_id)
 
     except Exception as e:
         sys.stderr.write(f"❌ Error in get_stats: {e}\n")
@@ -141,7 +191,7 @@ def handle_get_stats(data, request_id):
         send_message("error", error=str(e), request_id=request_id)
 
 
-# Command dispatcher
+# Command dispatcher - maps command names to handler functions
 COMMANDS = {
     "create_entry": handle_create_entry,
     "get_entries": handle_get_entries,
@@ -150,16 +200,32 @@ COMMANDS = {
 
 
 def main():
-    """Main loop: Read from stdin, process commands, write to stdout."""
+    """
+    Main loop: Read from stdin, process commands, write to stdout.
+
+    PROTOCOL:
+    - Electron sends: {"command": "create_entry", "data": {...}, "requestId": 123}
+    - Python processes command
+    - Python responds: {"type": "response", "data": {...}, "requestId": 123}
+
+    WHY STDIN/STDOUT?
+    - No HTTP server needed
+    - No ports to manage
+    - Direct process communication
+    - Provably offline
+    - Faster than HTTP
+    """
 
     # Signal ready to Electron
     send_message("ready")
-    sys.stderr.write("✅ Python subprocess ready\n")
+    sys.stderr.write("✅ Python subprocess ready (with database + ML!)\n")
+    sys.stderr.write(f"📁 Database: {db_path}\n")
     sys.stderr.flush()
 
-    # Process commands from stdin
+    # Process commands from stdin (blocking loop)
     for line in sys.stdin:
         try:
+            # Parse JSON command
             message = json.loads(line.strip())
             command = message.get("command")
             data = message.get("data", {})
@@ -168,6 +234,7 @@ def main():
             sys.stderr.write(f"📨 Received command: {command} (ID: {request_id})\n")
             sys.stderr.flush()
 
+            # Dispatch to appropriate handler
             if command in COMMANDS:
                 COMMANDS[command](data, request_id)
             else:
@@ -179,11 +246,27 @@ def main():
             sys.stderr.write(f"❌ JSON decode error: {e}\n")
             sys.stderr.flush()
             send_message("error", error=f"Invalid JSON: {e}")
+
         except Exception as e:
             sys.stderr.write(f"❌ Unexpected error: {e}\n")
             sys.stderr.flush()
+            import traceback
+
+            traceback.print_exc(file=sys.stderr)
             send_message("error", error=f"Unexpected error: {e}")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.stderr.write("\n👋 Python subprocess shutting down\n")
+        sys.stderr.flush()
+        db.close()
+    except Exception as e:
+        sys.stderr.write(f"\n💥 Fatal error: {e}\n")
+        sys.stderr.flush()
+        import traceback
+
+        traceback.print_exc(file=sys.stderr)
+        db.close()

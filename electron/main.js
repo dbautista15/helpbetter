@@ -51,12 +51,21 @@ function startPythonProcess() {
   console.log(`Python executable: ${pythonExe}`);
   console.log(`Script path: ${pythonScript}`);
 
+  // Database path configuration
+  // DEVELOPMENT: Use backend/journal.db (where demo data is)
+  // PRODUCTION: Use proper OS location
+  const dbPath = app.isPackaged
+    ? path.join(app.getPath("userData"), "journal.db")
+    : path.join(__dirname, "..", "backend", "journal.db");
+
+  console.log(`Database path: ${dbPath}`);
+
   pythonProcess = spawn(pythonExe, [pythonScript], {
     cwd: path.join(__dirname, ".."),
     env: {
       ...process.env,
       PYTHONUNBUFFERED: "1",
-      DB_PATH: path.join(app.getPath("userData"), "journal.db"),
+      DB_PATH: dbPath, // Tell Python which database to use
     },
   });
 
@@ -148,7 +157,7 @@ function createWindow() {
  * IPC HANDLERS - Fixed with request ID system
  */
 
-// Create journal entry
+// Create journal entry with ML analysis
 ipcMain.handle("create-entry", async (event, entryData) => {
   console.log("📝 Creating entry:", entryData);
 
@@ -159,7 +168,7 @@ ipcMain.handle("create-entry", async (event, entryData) => {
       // Store the promise handlers
       pendingRequests.set(requestId, { resolve, reject });
 
-      // Timeout after 30 seconds
+      // Timeout after 30 seconds (ML can take time)
       setTimeout(() => {
         if (pendingRequests.has(requestId)) {
           pendingRequests.delete(requestId);
