@@ -27,7 +27,11 @@ db = Database(db_path)
 # Initialize ML analyzer (loads model once at startup)
 sys.stderr.write("🔄 Loading ML analyzer...\n")
 sys.stderr.flush()
-analyzer = Analyzer()
+
+# Check if LLM mode is enabled (can be controlled via environment variable)
+use_llm = os.getenv("USE_LLM", "true").lower() == "true"
+analyzer = Analyzer(use_llm=use_llm)
+
 sys.stderr.write("✅ ML analyzer ready\n")
 sys.stderr.flush()
 

@@ -1,9 +1,11 @@
 """
 ML Analyzer for Introspect - Multi-Factor Pattern Recognition & Composite Mental State Scoring
+Enhanced with RAG LLM Pipeline for Natural Language Insights
 """
 
 import sys
 import re
+import os
 import numpy as np
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -11,17 +13,65 @@ from typing import List, Dict, Tuple, Optional
 from datetime import datetime
 from collections import Counter, defaultdict
 
+# NEW: LLM inference for RAG pipeline
+try:
+    from llama_cpp import Llama
+    LLAMA_AVAILABLE = True
+except ImportError:
+    LLAMA_AVAILABLE = False
+    sys.stderr.write("⚠️  llama-cpp-python not available. Using template-based insights.\n")
+
 
 class Analyzer:
-    """ML-powered journal entry analyzer with composite mental state scoring."""
+    """ML-powered journal entry analyzer with composite mental state scoring and RAG LLM."""
 
-    def __init__(self):
-        """Initialize the analyzer with ML model."""
+    def __init__(self, use_llm: bool = True):
+        """Initialize the analyzer with ML model and optional LLM."""
         sys.stderr.write("📦 Loading ML model...\n")
         sys.stderr.flush()
+        
+        # Load embedding model (always needed for semantic search)
         self.model = SentenceTransformer("all-MiniLM-L6-v2")
         sys.stderr.write("✅ ML model loaded successfully\n")
         sys.stderr.flush()
+        
+        # Load LLM for insight generation (optional)
+        self.llm = None
+        self.use_llm = use_llm and LLAMA_AVAILABLE
+        
+        if self.use_llm:
+            try:
+                sys.stderr.write("🤖 Loading GGUF model for LLM insights...\n")
+                sys.stderr.flush()
+                
+                # Get model path from environment or use default
+                resources_path = os.getenv("RESOURCES_PATH", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                model_path = os.path.join(resources_path, "backend", "scripts", "models", "gemma-2b-Q4_K_M.gguf")
+                
+                if not os.path.exists(model_path):
+                    sys.stderr.write(f"⚠️  GGUF model not found at: {model_path}\n")
+                    sys.stderr.write("⚠️  Falling back to template-based insights.\n")
+                    sys.stderr.flush()
+                    self.use_llm = False
+                else:
+                    self.llm = Llama(
+                        model_path=model_path,
+                        n_ctx=2048,  # Context window
+                        n_threads=4,  # CPU threads
+                        n_gpu_layers=0,  # Use 0 for CPU-only, increase if GPU available
+                        verbose=False,
+                    )
+                    sys.stderr.write("✅ LLM loaded successfully (RAG mode enabled)\n")
+                    sys.stderr.flush()
+            except Exception as e:
+                sys.stderr.write(f"⚠️  Failed to load LLM: {e}\n")
+                sys.stderr.write("⚠️  Falling back to template-based insights.\n")
+                sys.stderr.flush()
+                self.llm = None
+                self.use_llm = False
+        else:
+            sys.stderr.write("📝 Using template-based insights (LLM disabled)\n")
+            sys.stderr.flush()
 
     def analyze_entry(
         self, new_entry_text: str, past_entries: List[Dict], mood_rating: int = 3
@@ -768,7 +818,229 @@ class Analyzer:
         frequency_pattern: Optional[Dict],
         all_past_entries: List[Dict],
     ) -> str:
-        """Generate deeply personalized insights using ALL available signals."""
+        """
+        Generate deeply personalized insights.
+        Routes to LLM-based RAG pipeline or template-based fallback.
+        """
+        
+        # Route to LLM if available
+        if self.use_llm:
+            return self._generate_llm_insight(
+                new_entry_text, similar_entries, mood_rating, mental_state,
+                writing_intensity, sentiment, reflection, theme_context,
+                frequency_pattern, all_past_entries
+            )
+        else:
+            # Fallback to template-based insights
+            return self._generate_insight_template(
+                new_entry_text, similar_entries, mood_rating, mental_state,
+                writing_intensity, sentiment, reflection, theme_context,
+                frequency_pattern, all_past_entries
+            )
+
+    def _generate_llm_insight(
+        self,
+        new_entry_text: str,
+        similar_entries: List[Dict],
+        mood_rating: int,
+        mental_state: Dict,
+        writing_intensity: Dict,
+        sentiment: Dict,
+        reflection: Dict,
+        theme_context: Optional[Dict],
+        frequency_pattern: Optional[Dict],
+        all_past_entries: List[Dict],
+    ) -> str:
+        """
+        Generate insight using RAG LLM pipeline.
+        
+        RAG Architecture:
+        1. RETRIEVE: Use embeddings to find similar past entries (already done)
+        2. AUGMENT: Build context-rich prompt with retrieved entries
+        3. GENERATE: Use LLM to create personalized insight
+        """
+        
+        if not self.use_llm or self.llm is None:
+            # Fallback to template-based insights
+            return self._generate_insight_template(
+                new_entry_text, similar_entries, mood_rating, mental_state,
+                writing_intensity, sentiment, reflection, theme_context,
+                frequency_pattern, all_past_entries
+            )
+        
+        # Build RAG prompt
+        prompt = self._build_rag_prompt(
+            new_entry_text=new_entry_text,
+            similar_entries=similar_entries,
+            mood_rating=mood_rating,
+            mental_state=mental_state,
+            writing_intensity=writing_intensity,
+            sentiment=sentiment,
+            reflection=reflection,
+            theme_context=theme_context,
+            frequency_pattern=frequency_pattern,
+            entry_count=len(all_past_entries),
+        )
+        
+        # Generate insight using LLM
+        try:
+            sys.stderr.write("🤖 Generating LLM insight...\n")
+            sys.stderr.flush()
+            
+            response = self.llm(
+                prompt,
+                max_tokens=300,
+                temperature=0.7,
+                top_p=0.9,
+                stop=["User:", "Assistant:", "\n\n\n"],
+                echo=False,
+            )
+            
+            insight = response["choices"][0]["text"].strip()
+            
+            sys.stderr.write(f"✅ LLM insight generated ({len(insight)} chars)\n")
+            sys.stderr.flush()
+            
+            return insight
+            
+        except Exception as e:
+            sys.stderr.write(f"⚠️  LLM generation failed: {e}\n")
+            sys.stderr.write("⚠️  Falling back to template-based insight.\n")
+            sys.stderr.flush()
+            
+            # Fallback to templates
+            return self._generate_insight_template(
+                new_entry_text, similar_entries, mood_rating, mental_state,
+                writing_intensity, sentiment, reflection, theme_context,
+                frequency_pattern, all_past_entries
+            )
+
+    def _build_rag_prompt(
+        self,
+        new_entry_text: str,
+        similar_entries: List[Dict],
+        mood_rating: int,
+        mental_state: Dict,
+        writing_intensity: Dict,
+        sentiment: Dict,
+        reflection: Dict,
+        theme_context: Optional[Dict],
+        frequency_pattern: Optional[Dict],
+        entry_count: int,
+    ) -> str:
+        """
+        Build a context-rich prompt for the LLM using retrieved entries.
+        
+        This is the "Augmented" part of RAG - we provide the LLM with:
+        1. User's current entry
+        2. Retrieved similar past entries (semantic search)
+        3. Analytical context (mood, patterns, themes)
+        """
+        
+        # Format similar entries as context
+        context_entries = []
+        if similar_entries:
+            for i, entry in enumerate(similar_entries[:3], 1):
+                time_ago = self._format_time_ago(entry["timestamp"])
+                context_entries.append(
+                    f"Past Entry #{i} ({time_ago}, mood: {entry.get('mood', 3)}/5, "
+                    f"{int(entry['similarity']*100)}% similar):\n\"{entry['text'][:200]}...\""
+                )
+        
+        context_block = "\n\n".join(context_entries) if context_entries else "No similar past entries found."
+        
+        # Build analytical context
+        composite = mental_state["composite_score"]
+        composite_diff = composite - mood_rating
+        
+        analysis_context = f"""
+Current Analysis:
+- User's mood rating: {mood_rating}/5
+- Composite mental state: {composite}/5 (AI-analyzed from multiple signals)
+- Primary emotion: {sentiment['primary_emotion']}
+- Secondary emotion: {sentiment.get('secondary_emotion', 'none')}
+- Writing intensity: {writing_intensity['intensity']} ({writing_intensity['word_count']} words)
+- Processing mode: {reflection['mode']} ({reflection['question_count']} questions asked)
+- Entry count: #{entry_count + 1}
+"""
+        
+        # Add pattern context if available
+        if theme_context:
+            analysis_context += f"- Recurring theme pattern: {theme_context['combination']} (appears {theme_context['frequency']}x)\n"
+        
+        if frequency_pattern:
+            analysis_context += f"- Writing pattern: {frequency_pattern['pattern']}\n"
+        
+        # Special insights
+        insights_to_mention = []
+        if abs(composite_diff) >= 0.7:
+            if composite_diff > 0:
+                insights_to_mention.append(f"The user rated themselves {mood_rating}/5, but their actual state seems better ({composite}/5). They may be being too hard on themselves.")
+            else:
+                insights_to_mention.append(f"The user rated themselves {mood_rating}/5, but their actual state may be more challenging ({composite}/5). They might be masking their struggles.")
+        
+        if sentiment.get("is_mixed"):
+            insights_to_mention.append(f"The user is experiencing mixed emotions: {sentiment['primary_emotion']} and {sentiment['secondary_emotion']}.")
+        
+        special_insights = "\n- ".join(insights_to_mention) if insights_to_mention else "None"
+        
+        # Build the full prompt
+        prompt = f"""You are a compassionate journaling companion helping someone process their emotions. You have access to their current journal entry and past similar entries.
+
+## Retrieved Past Entries (Most Similar):
+{context_block}
+
+## Current Journal Entry:
+"{new_entry_text}"
+
+{analysis_context}
+
+## Special Insights to Consider:
+- {special_insights}
+
+TASK:
+Analyze connections between the current entry and past entries. Identify:
+
+1. **Recurring Themes**: Topics, concerns, or situations that appear across entries
+2. **Behavioral Patterns**: Repeated actions, reactions, or coping mechanisms
+3. **Emotional Trajectories**: How feelings about similar situations have evolved
+4. **Cognitive Patterns**: Thought processes, decision-making styles, or mental frameworks
+5. **Progress Indicators**: Growth, stagnation, or regression in specific areas
+6. **Blind Spots**: Patterns the writer may not be aware of
+
+GUIDELINES:
+- Be specific, citing dates and examples
+- Note both positive patterns and areas for reflection
+- Avoid being judgmental; focus on observation
+- Highlight growth and positive changes
+- Ask thought-provoking questions when appropriate
+- Keep insights actionable
+
+Talk to the person Provide 3-5 key insights, prioritizing the most meaningful patterns. Do not make insights up if there are no past similar entries.
+
+Be conversational, empathetic, and specific to their experiences. Avoid generic advice.
+
+In the first paragraph, state all of the context you were given. In the second paragraph, tell the user the patterns you have found."""
+
+        return prompt
+
+    def _generate_insight_template(
+        self,
+        new_entry_text: str,
+        similar_entries: List[Dict],
+        mood_rating: int,
+        mental_state: Dict,
+        writing_intensity: Dict,
+        sentiment: Dict,
+        reflection: Dict,
+        theme_context: Optional[Dict],
+        frequency_pattern: Optional[Dict],
+        all_past_entries: List[Dict],
+    ) -> str:
+        """
+        Generate deeply personalized insights using template-based logic.
+        This is the fallback when LLM is not available.
+        """
 
         # Case 1: First entry
         if len(all_past_entries) == 0:
