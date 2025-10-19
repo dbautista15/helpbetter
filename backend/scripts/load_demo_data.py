@@ -121,20 +121,49 @@ def load_demo_data():
         db.conn.commit()
         print("✅ Cleared existing entries\n")
 
-    # Import ML analyzer to generate embeddings
-    print("🔄 Loading ML analyzer to generate embeddings...")
+    # Import ML analyzer to generate embeddings and analysis
+    print("🔄 Loading ML analyzer with RAG LLM pipeline...")
     from ml.analyzer import Analyzer
 
-    analyzer = Analyzer()
+    # Initialize with use_llm=False for faster demo data loading
+    # (Template-based insights are fine for demo data)
+    analyzer = Analyzer(use_llm=False)
     print("✅ ML analyzer loaded\n")
 
     # Load each demo entry
     for i, entry in enumerate(demo_entries, 1):
+        print(f"{i:2d}. Processing entry... ", end="", flush=True)
+        
         # Calculate timestamp (backdate by days_ago)
         timestamp = datetime.now() - timedelta(days=entry["days_ago"])
 
-        # Save entry to database
-        entry_id = db.save_entry(content=entry["content"], mood_rating=entry["mood"])
+        # Get past entries for analysis (entries loaded so far)
+        past_entries = db.get_all_entries_for_analysis()
+        
+        # Run full ML analysis (generates embedding, insight, summary, etc.)
+        analysis = analyzer.analyze_entry(
+            entry["content"], 
+            past_entries, 
+            entry["mood"]
+        )
+        
+        # Prepare analysis for storage (exclude embedding - stored separately)
+        analysis_for_db = {
+            "insight": analysis["insight"],
+            "mood": analysis["mood"],
+            "summary": analysis["summary"],
+            "mental_state": analysis.get("mental_state", {}),
+            "writing_intensity": analysis.get("writing_intensity", {}),
+            "sentiment": analysis.get("sentiment", {}),
+        }
+        
+        # Save entry with embedding and full analysis
+        entry_id = db.save_entry(
+            content=entry["content"],
+            mood_rating=entry["mood"],
+            embedding=analysis["embedding"],
+            analysis=analysis_for_db,
+        )
 
         # Update timestamp to match days_ago
         db.conn.execute(
@@ -142,13 +171,6 @@ def load_demo_data():
             (timestamp.isoformat(), entry_id),
         )
         db.conn.commit()
-
-        # Generate embedding for this entry
-        print(f"{i:2d}. Generating embedding... ", end="", flush=True)
-        embedding = analyzer.model.encode(entry["content"])
-
-        # Update entry with embedding
-        db.update_embedding(entry_id, embedding)
 
         # Print progress
         preview = (
@@ -164,6 +186,11 @@ def load_demo_data():
             f"✅ [{entry['days_ago']:2d} days ago] {mood_emoji} Mood: {entry['mood']}/5"
         )
         print(f"    {preview}")
+        
+        # Show summary if available
+        if "summary" in analysis and "title" in analysis["summary"]:
+            print(f"    📝 {analysis['summary']['title']}")
+        
         print()
 
     # Show final statistics
@@ -182,6 +209,9 @@ def load_demo_data():
     print("   ✓ Emotional progression: Anxiety → Action → Success")
     print("   ✓ Self-awareness: User notices patterns over time")
     print("   ✓ Semantic similarity: 'anxious'/'worried'/'nervous' will match")
+    print("   ✓ Auto-generated summaries for timeline view")
+    print("   ✓ Composite mental state scoring")
+    print("   ✓ Multi-factor analysis (sentiment, writing intensity, reflection)")
     print()
     print(f"📁 Database location: {db_path}")
     print()
@@ -190,9 +220,12 @@ def load_demo_data():
     print()
     print("🎯 Next steps:")
     print("   1. Run Electron app: cd ../electron && npm start")
-    print("   2. Click 'Get Entries' to see timeline")
+    print("   2. Click '📚 View Past Entries' to see timeline with summaries")
     print("   3. Write new entry: 'Nervous about next presentation'")
-    print("   4. Watch ML detect pattern with past anxiety entries!")
+    print("   4. Watch RAG LLM generate personalized insight!")
+    print()
+    print("💡 Tip: The app now uses RAG LLM pipeline for natural insights.")
+    print("   If you want faster loading, LLM is auto-disabled for demo data.")
     print()
 
     db.close()
